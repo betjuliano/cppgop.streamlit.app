@@ -9,6 +9,8 @@ import random
 import string
 from PIL import Image
 import io
+import matplotlib.pyplot as plt
+import numpy as np
 
 # Configuração da página
 st.set_page_config(
@@ -229,6 +231,23 @@ def get_aproveitamentos():
     conn.close()
     return aproveitamentos
 
+def get_aproveitamentos_by_aluno(aluno_id):
+    conn = sqlite3.connect('ppgop.db')
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    
+    c.execute("""
+    SELECT a.*, b.nome as aluno_nome 
+    FROM aproveitamentos a
+    JOIN alunos b ON a.aluno_id = b.id
+    WHERE a.aluno_id = ?
+    ORDER BY a.data_solicitacao DESC
+    """, (aluno_id,))
+    aproveitamentos = [dict(row) for row in c.fetchall()]
+    
+    conn.close()
+    return aproveitamentos
+
 def get_aproveitamento(aproveitamento_id):
     conn = sqlite3.connect('ppgop.db')
     conn.row_factory = sqlite3.Row
@@ -369,6 +388,77 @@ def delete_aproveitamento(aproveitamento_id):
     conn.commit()
     conn.close()
     return True
+
+# Função para calcular resumo de aproveitamentos
+def calcular_resumo_aproveitamentos(aluno_id):
+    aproveitamentos = get_aproveitamentos_by_aluno(aluno_id)
+    
+    # Inicializar resumo
+    resumo = {
+        'disciplinas': {
+            'total': 0,
+            'creditos': 0,
+            'horas': 0,  # Considerando 15 horas por crédito
+            'deferidos': 0,
+            'pendentes': 0
+        },
+        'idiomas': {
+            'total': 0,
+            'aprovados': 0,
+            'pendentes': 0
+        },
+        'detalhes': {
+            'disciplinas': [],
+            'idiomas': []
+        }
+    }
+    
+    # Processar cada aproveitamento
+    for aprov in aproveitamentos:
+        # Verificar se está deferido
+        is_deferido = aprov['status'] == StatusAproveitamento.DEFERIDO
+        
+        if aprov['tipo'] == TipoAproveitamento.DISCIPLINA:
+            resumo['disciplinas']['total'] += 1
+            
+            # Adicionar aos detalhes
+            resumo['detalhes']['disciplinas'].append({
+                'nome': aprov['nome_disciplina'],
+                'codigo': aprov['codigo_disciplina'],
+                'creditos': aprov['creditos'],
+                'horas': aprov['creditos'] * 15,
+                'instituicao': aprov['instituicao'],
+                'status': aprov['status'],
+                'processo': aprov['numero_processo']
+            })
+            
+            # Somar créditos e horas apenas se deferido
+            if is_deferido:
+                resumo['disciplinas']['creditos'] += aprov['creditos']
+                resumo['disciplinas']['horas'] += aprov['creditos'] * 15
+                resumo['disciplinas']['deferidos'] += 1
+            else:
+                resumo['disciplinas']['pendentes'] += 1
+                
+        elif aprov['tipo'] == TipoAproveitamento.IDIOMA:
+            resumo['idiomas']['total'] += 1
+            
+            # Adicionar aos detalhes
+            resumo['detalhes']['idiomas'].append({
+                'idioma': aprov['idioma'],
+                'nota': aprov['nota'],
+                'instituicao': aprov['instituicao'],
+                'status': aprov['status'],
+                'processo': aprov['numero_processo']
+            })
+            
+            # Contar aprovados
+            if is_deferido:
+                resumo['idiomas']['aprovados'] += 1
+            else:
+                resumo['idiomas']['pendentes'] += 1
+    
+    return resumo
 
 # Função para importar alunos do Excel
 def import_alunos_from_excel(uploaded_file):
@@ -532,6 +622,10 @@ else:
         
         if st.button("Aproveitamentos", key="nav_aproveitamentos"):
             set_page('aproveitamentos')
+            st.rerun()
+        
+        if st.button("Dashboard", key="nav_dashboard"):
+            set_page('dashboard')
             st.rerun()
         
         if st.button("Importar Alunos", key="nav_importar"):
@@ -879,6 +973,177 @@ else:
                                 st.rerun()
         else:
             st.info("Nenhum aproveitamento cadastrado.")
+    
+    # Página de Dashboard
+    elif st.session_state.current_page == 'dashboard':
+        st.markdown('<div style="font-size: 2rem; font-weight: bold; margin-bottom: 1rem; color: #0A4C92;">Dashboard de Alunos</div>', unsafe_allow_html=True)
+        
+        # Selecionar aluno
+        alunos = get_alunos()
+        if not alunos:
+            st.info("Nenhum aluno cadastrado para exibir no dashboard.")
+        else:
+            aluno_options = {a['id']: a['nome'] for a in alunos}
+            
+            aluno_id = st.selectbox("Selecione um aluno:", 
+                                  options=list(aluno_options.keys()),
+                                  format_func=lambda x: aluno_options.get(x, ''))
+            
+            if aluno_id:
+                # Obter dados do aluno
+                aluno = get_aluno(aluno_id)
+                
+                # Obter resumo de aproveitamentos
+                resumo = calcular_resumo_aproveitamentos(aluno_id)
+                
+                # Exibir dados do aluno
+                st.markdown(f"### Dados do Aluno: {aluno['nome']}")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown(f"**Matrícula:** {aluno['matricula'] or 'Não informada'}")
+                    st.markdown(f"**Email:** {aluno['email']}")
+                    st.markdown(f"**Orientador:** {aluno['orientador'] or 'Não informado'}")
+                
+                with col2:
+                    st.markdown(f"**Linha de Pesquisa:** {aluno['linha_pesquisa'] or 'Não informada'}")
+                    st.markdown(f"**Data de Ingresso:** {datetime.datetime.strptime(aluno['data_ingresso'], '%Y-%m-%d').strftime('%d/%m/%Y')}")
+                    st.markdown(f"**Prazo Defesa Projeto:** {datetime.datetime.strptime(aluno['prazo_defesa_projeto'], '%Y-%m-%d').strftime('%d/%m/%Y') if aluno['prazo_defesa_projeto'] else 'Não informado'}")
+                    st.markdown(f"**Prazo Defesa Tese:** {datetime.datetime.strptime(aluno['prazo_defesa_tese'], '%Y-%m-%d').strftime('%d/%m/%Y') if aluno['prazo_defesa_tese'] else 'Não informado'}")
+                
+                # Exibir resumo de aproveitamentos
+                st.markdown("### Resumo de Aproveitamentos")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Card para disciplinas
+                    st.markdown("""
+                    <div style="background-color: #EBF5FF; padding: 15px; border-radius: 5px; border-left: 5px solid #0A4C92;">
+                        <h4 style="color: #0A4C92; margin-top: 0;">Disciplinas</h4>
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown(f"**Total de disciplinas:** {resumo['disciplinas']['total']}")
+                    st.markdown(f"**Créditos aproveitados:** {resumo['disciplinas']['creditos']}")
+                    st.markdown(f"**Horas aproveitadas:** {resumo['disciplinas']['horas']}")
+                    st.markdown(f"**Disciplinas deferidas:** {resumo['disciplinas']['deferidos']}")
+                    st.markdown(f"**Disciplinas pendentes:** {resumo['disciplinas']['pendentes']}")
+                    
+                    st.markdown("</div>", unsafe_allow_html=True)
+                
+                with col2:
+                    # Card para idiomas
+                    st.markdown("""
+                    <div style="background-color: #EBF5FF; padding: 15px; border-radius: 5px; border-left: 5px solid #0A4C92;">
+                        <h4 style="color: #0A4C92; margin-top: 0;">Idiomas</h4>
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown(f"**Total de idiomas:** {resumo['idiomas']['total']}")
+                    st.markdown(f"**Idiomas aprovados:** {resumo['idiomas']['aprovados']}")
+                    st.markdown(f"**Idiomas pendentes:** {resumo['idiomas']['pendentes']}")
+                    
+                    st.markdown("</div>", unsafe_allow_html=True)
+                
+                # Gráfico de aproveitamentos
+                if resumo['disciplinas']['total'] > 0 or resumo['idiomas']['total'] > 0:
+                    st.markdown("### Gráficos de Aproveitamentos")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Gráfico de disciplinas
+                        if resumo['disciplinas']['total'] > 0:
+                            fig, ax = plt.subplots(figsize=(8, 5))
+                            
+                            labels = ['Deferidas', 'Pendentes']
+                            sizes = [resumo['disciplinas']['deferidos'], resumo['disciplinas']['pendentes']]
+                            colors = ['#0A4C92', '#EBF5FF']
+                            
+                            ax.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
+                            ax.axis('equal')
+                            plt.title('Status das Disciplinas')
+                            
+                            st.pyplot(fig)
+                    
+                    with col2:
+                        # Gráfico de idiomas
+                        if resumo['idiomas']['total'] > 0:
+                            fig, ax = plt.subplots(figsize=(8, 5))
+                            
+                            labels = ['Aprovados', 'Pendentes']
+                            sizes = [resumo['idiomas']['aprovados'], resumo['idiomas']['pendentes']]
+                            colors = ['#0A4C92', '#EBF5FF']
+                            
+                            ax.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
+                            ax.axis('equal')
+                            plt.title('Status dos Idiomas')
+                            
+                            st.pyplot(fig)
+                
+                # Detalhes dos aproveitamentos
+                st.markdown("### Detalhes dos Aproveitamentos")
+                
+                # Disciplinas
+                if resumo['detalhes']['disciplinas']:
+                    st.markdown("#### Disciplinas")
+                    
+                    # Converter para DataFrame
+                    df_disciplinas = pd.DataFrame(resumo['detalhes']['disciplinas'])
+                    
+                    # Formatar status
+                    status_map = {
+                        'solicitado': 'Solicitado',
+                        'aprovado_coordenacao': 'Aprovado (Coord.)',
+                        'aprovado_colegiado': 'Aprovado (Coleg.)',
+                        'deferido': 'Deferido',
+                        'indeferido': 'Indeferido'
+                    }
+                    df_disciplinas['status'] = df_disciplinas['status'].map(status_map)
+                    
+                    # Renomear colunas
+                    cols_display = {
+                        'nome': 'Disciplina',
+                        'codigo': 'Código',
+                        'creditos': 'Créditos',
+                        'horas': 'Horas',
+                        'instituicao': 'Instituição',
+                        'status': 'Status',
+                        'processo': 'Processo'
+                    }
+                    
+                    df_display = df_disciplinas.rename(columns=cols_display)
+                    
+                    # Exibir tabela
+                    st.dataframe(df_display, hide_index=True)
+                else:
+                    st.info("Nenhuma disciplina cadastrada para este aluno.")
+                
+                # Idiomas
+                if resumo['detalhes']['idiomas']:
+                    st.markdown("#### Idiomas")
+                    
+                    # Converter para DataFrame
+                    df_idiomas = pd.DataFrame(resumo['detalhes']['idiomas'])
+                    
+                    # Formatar status
+                    df_idiomas['status'] = df_idiomas['status'].map(status_map)
+                    
+                    # Renomear colunas
+                    cols_display = {
+                        'idioma': 'Idioma',
+                        'nota': 'Nota',
+                        'instituicao': 'Instituição',
+                        'status': 'Status',
+                        'processo': 'Processo'
+                    }
+                    
+                    df_display = df_idiomas.rename(columns=cols_display)
+                    
+                    # Exibir tabela
+                    st.dataframe(df_display, hide_index=True)
+                else:
+                    st.info("Nenhum idioma cadastrado para este aluno.")
     
     # Página de Importação de Alunos
     elif st.session_state.current_page == 'importar':
