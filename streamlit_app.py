@@ -1,38 +1,39 @@
+import io
+import base64
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from weasyprint import HTML, CSS
+from jinja2 import Template
 import streamlit as st
 import pandas as pd
 import sqlite3
-import os
-import hashlib
 import datetime
+import hashlib
 from enum import Enum
-import random
-import string
 from PIL import Image
-import io
-import matplotlib.pyplot as plt
-import numpy as np
 
 # Configuração da página
 st.set_page_config(
-    page_title="Sistema de Gestão de Alunos - PPGOP",
+    page_title="PPGOP - Sistema de Gestão",
     page_icon="📚",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Definição de enums
+# Enums para tipos e status
 class TipoAproveitamento(str, Enum):
-    DISCIPLINA = 'disciplina'
-    IDIOMA = 'idioma'
+    DISCIPLINA = "disciplina"
+    IDIOMA = "idioma"
 
 class StatusAproveitamento(str, Enum):
-    SOLICITADO = 'solicitado'
-    APROVADO_COORDENACAO = 'aprovado_coordenacao'
-    APROVADO_COLEGIADO = 'aprovado_colegiado'
-    DEFERIDO = 'deferido'
-    INDEFERIDO = 'indeferido'
+    SOLICITADO = "solicitado"
+    APROVADO_COORDENACAO = "aprovado_coordenacao"
+    APROVADO_COLEGIADO = "aprovado_colegiado"
+    DEFERIDO = "deferido"
+    INDEFERIDO = "indeferido"
 
-# Funções de banco de dados
+# Inicializar banco de dados
 def init_db():
     conn = sqlite3.connect('ppgop.db')
     c = conn.cursor()
@@ -42,7 +43,6 @@ def init_db():
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY,
         username TEXT UNIQUE NOT NULL,
-        email TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL
     )
     ''')
@@ -71,8 +71,6 @@ def init_db():
         id INTEGER PRIMARY KEY,
         aluno_id INTEGER NOT NULL,
         tipo TEXT NOT NULL,
-        numero_processo TEXT UNIQUE,
-        status TEXT DEFAULT 'solicitado',
         nome_disciplina TEXT,
         codigo_disciplina TEXT,
         creditos INTEGER,
@@ -81,55 +79,42 @@ def init_db():
         instituicao TEXT,
         observacoes TEXT,
         link_documentos TEXT,
+        numero_processo TEXT,
+        status TEXT DEFAULT 'solicitado',
         data_solicitacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         data_aprovacao_coordenacao TIMESTAMP,
         data_aprovacao_colegiado TIMESTAMP,
         data_deferimento TIMESTAMP,
-        FOREIGN KEY (aluno_id) REFERENCES alunos (id)
+        FOREIGN KEY (aluno_id) REFERENCES alunos (id) ON DELETE CASCADE
     )
     ''')
     
     # Inserir usuários padrão se não existirem
     c.execute("SELECT COUNT(*) FROM users WHERE username = 'Breno'")
     if c.fetchone()[0] == 0:
-        password_hash = hashlib.sha256('adm123'.encode()).hexdigest()
-        c.execute("INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
-                 ('Breno', 'breno@ppgop.ufsm.br', password_hash))
+        password_hash = hashlib.sha256("adm123".encode()).hexdigest()
+        c.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", ("Breno", password_hash))
     
     c.execute("SELECT COUNT(*) FROM users WHERE username = 'PPGOP'")
     if c.fetchone()[0] == 0:
-        password_hash = hashlib.sha256('123curso'.encode()).hexdigest()
-        c.execute("INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
-                 ('PPGOP', 'ppgop@ufsm.br', password_hash))
+        password_hash = hashlib.sha256("123curso".encode()).hexdigest()
+        c.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", ("PPGOP", password_hash))
     
     conn.commit()
     conn.close()
 
-# Função para gerar número de processo
-def gerar_numero_processo():
-    """Gera um número de processo no formato 23081.XXXXXX/ANO-XX"""
-    ano_atual = datetime.datetime.now().year
-    numero = ''.join(random.choices(string.digits, k=6))
-    sequencial = ''.join(random.choices(string.digits, k=2))
-    return f"23081.{numero}/{ano_atual}-{sequencial}"
-
-# Funções de autenticação
-def login(username, password):
+# Funções de acesso ao banco de dados
+def get_user(username, password):
     conn = sqlite3.connect('ppgop.db')
     c = conn.cursor()
     
     password_hash = hashlib.sha256(password.encode()).hexdigest()
-    c.execute("SELECT id, username, email FROM users WHERE username = ? AND password_hash = ?",
-             (username, password_hash))
+    c.execute("SELECT id, username FROM users WHERE username = ? AND password_hash = ?", (username, password_hash))
     user = c.fetchone()
     
     conn.close()
-    
-    if user:
-        return {'id': user[0], 'username': user[1], 'email': user[2]}
-    return None
+    return {"id": user[0], "username": user[1]} if user else None
 
-# Funções CRUD para alunos
 def get_alunos():
     conn = sqlite3.connect('ppgop.db')
     conn.row_factory = sqlite3.Row
@@ -207,18 +192,11 @@ def delete_aluno(aluno_id):
     conn = sqlite3.connect('ppgop.db')
     c = conn.cursor()
     
-    # Verificar se existem aproveitamentos relacionados
-    c.execute("SELECT COUNT(*) FROM aproveitamentos WHERE aluno_id = ?", (aluno_id,))
-    if c.fetchone()[0] > 0:
-        conn.close()
-        return False
-    
     c.execute("DELETE FROM alunos WHERE id = ?", (aluno_id,))
+    
     conn.commit()
     conn.close()
-    return True
 
-# Funções CRUD para aproveitamentos
 def get_aproveitamentos():
     conn = sqlite3.connect('ppgop.db')
     conn.row_factory = sqlite3.Row
@@ -226,27 +204,10 @@ def get_aproveitamentos():
     
     c.execute("""
     SELECT a.*, b.nome as aluno_nome 
-    FROM aproveitamentos a
-    JOIN alunos b ON a.aluno_id = b.id
+    FROM aproveitamentos a 
+    JOIN alunos b ON a.aluno_id = b.id 
     ORDER BY a.data_solicitacao DESC
     """)
-    aproveitamentos = [dict(row) for row in c.fetchall()]
-    
-    conn.close()
-    return aproveitamentos
-
-def get_aproveitamentos_by_aluno(aluno_id):
-    conn = sqlite3.connect('ppgop.db')
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    
-    c.execute("""
-    SELECT a.*, b.nome as aluno_nome 
-    FROM aproveitamentos a
-    JOIN alunos b ON a.aluno_id = b.id
-    WHERE a.aluno_id = ?
-    ORDER BY a.data_solicitacao DESC
-    """, (aluno_id,))
     aproveitamentos = [dict(row) for row in c.fetchall()]
     
     conn.close()
@@ -257,130 +218,98 @@ def get_aproveitamento(aproveitamento_id):
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
     
-    c.execute("""
-    SELECT a.*, b.nome as aluno_nome 
-    FROM aproveitamentos a
-    JOIN alunos b ON a.aluno_id = b.id
-    WHERE a.id = ?
-    """, (aproveitamento_id,))
+    c.execute("SELECT * FROM aproveitamentos WHERE id = ?", (aproveitamento_id,))
     aproveitamento = c.fetchone()
     
     conn.close()
     return dict(aproveitamento) if aproveitamento else None
 
+def get_aproveitamentos_aluno(aluno_id):
+    conn = sqlite3.connect('ppgop.db')
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    
+    c.execute("""
+    SELECT * FROM aproveitamentos 
+    WHERE aluno_id = ? 
+    ORDER BY data_solicitacao DESC
+    """, (aluno_id,))
+    aproveitamentos = [dict(row) for row in c.fetchall()]
+    
+    conn.close()
+    return aproveitamentos
+
 def save_aproveitamento(aproveitamento_data, aproveitamento_id=None):
     conn = sqlite3.connect('ppgop.db')
     c = conn.cursor()
     
-    if aproveitamento_id:  # Atualizar
-        # Verificar status anterior
-        c.execute("SELECT status FROM aproveitamentos WHERE id = ?", (aproveitamento_id,))
-        status_anterior = c.fetchone()[0]
-        
-        # Preparar campos para atualização
-        fields = [
-            "aluno_id = ?",
-            "tipo = ?",
-            "instituicao = ?",
-            "observacoes = ?",
-            "link_documentos = ?",
-            "status = ?"
-        ]
-        params = [
-            aproveitamento_data['aluno_id'],
-            aproveitamento_data['tipo'],
-            aproveitamento_data['instituicao'],
-            aproveitamento_data['observacoes'],
-            aproveitamento_data['link_documentos'],
-            aproveitamento_data['status']
-        ]
-        
-        # Adicionar campos específicos por tipo
-        if aproveitamento_data['tipo'] == TipoAproveitamento.DISCIPLINA:
-            fields.extend([
-                "nome_disciplina = ?",
-                "codigo_disciplina = ?",
-                "creditos = ?"
-            ])
-            params.extend([
-                aproveitamento_data['nome_disciplina'],
-                aproveitamento_data['codigo_disciplina'],
-                aproveitamento_data['creditos']
-            ])
-        elif aproveitamento_data['tipo'] == TipoAproveitamento.IDIOMA:
-            fields.extend([
-                "idioma = ?",
-                "nota = ?"
-            ])
-            params.extend([
-                aproveitamento_data['idioma'],
-                aproveitamento_data['nota']
-            ])
-        
-        # Atualizar datas com base no status
-        if status_anterior != aproveitamento_data['status']:
-            if aproveitamento_data['status'] == StatusAproveitamento.APROVADO_COORDENACAO:
-                fields.append("data_aprovacao_coordenacao = CURRENT_TIMESTAMP")
-            elif aproveitamento_data['status'] == StatusAproveitamento.APROVADO_COLEGIADO:
-                fields.append("data_aprovacao_colegiado = CURRENT_TIMESTAMP")
-            elif aproveitamento_data['status'] in [StatusAproveitamento.DEFERIDO, StatusAproveitamento.INDEFERIDO]:
-                fields.append("data_deferimento = CURRENT_TIMESTAMP")
-        
-        # Executar atualização
-        query = f"UPDATE aproveitamentos SET {', '.join(fields)} WHERE id = ?"
-        params.append(aproveitamento_id)
-        c.execute(query, params)
-        
-    else:  # Inserir
-        # Gerar número de processo
-        numero_processo = gerar_numero_processo()
-        
-        # Preparar campos comuns
-        fields = [
-            "aluno_id",
-            "tipo",
-            "numero_processo",
-            "status",
-            "instituicao",
-            "observacoes",
-            "link_documentos"
-        ]
-        params = [
-            aproveitamento_data['aluno_id'],
-            aproveitamento_data['tipo'],
-            numero_processo,
-            StatusAproveitamento.SOLICITADO,
-            aproveitamento_data['instituicao'],
-            aproveitamento_data['observacoes'],
-            aproveitamento_data['link_documentos']
-        ]
-        
-        # Adicionar campos específicos por tipo
-        if aproveitamento_data['tipo'] == TipoAproveitamento.DISCIPLINA:
-            fields.extend([
-                "nome_disciplina",
-                "codigo_disciplina",
-                "creditos"
-            ])
-            params.extend([
-                aproveitamento_data['nome_disciplina'],
-                aproveitamento_data['codigo_disciplina'],
-                aproveitamento_data['creditos']
-            ])
-        elif aproveitamento_data['tipo'] == TipoAproveitamento.IDIOMA:
-            fields.extend([
-                "idioma",
-                "nota"
-            ])
-            params.extend([
-                aproveitamento_data['idioma'],
-                aproveitamento_data['nota']
-            ])
-        
-        # Executar inserção
-        query = f"INSERT INTO aproveitamentos ({', '.join(fields)}) VALUES ({', '.join(['?'] * len(fields))})"
-        c.execute(query, params)
+    # Campos comuns
+    fields = [
+        'aluno_id', 'tipo', 'instituicao', 'observacoes', 'link_documentos'
+    ]
     
+    # Adicionar campos específicos por tipo
+    if aproveitamento_data['tipo'] == TipoAproveitamento.DISCIPLINA:
+        fields.extend(['nome_disciplina', 'codigo_disciplina', 'creditos'])
+    elif aproveitamento_data['tipo'] == TipoAproveitamento.IDIOMA:
+        fields.extend(['idioma', 'nota'])
+    
+    # Adicionar status se estiver editando
+    if aproveitamento_id and 'status' in aproveitamento_data:
+        fields.append('status')
+        
+        # Atualizar campos de data com base no status
+        if aproveitamento_data['status'] == StatusAproveitamento.APROVADO_COORDENACAO:
+            aproveitamento_data['data_aprovacao_coordenacao'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            fields.append('data_aprovacao_coordenacao')
+        elif aproveitamento_data['status'] == StatusAproveitamento.APROVADO_COLEGIADO:
+            aproveitamento_data['data_aprovacao_colegiado'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            fields.append('data_aprovacao_colegiado')
+        elif aproveitamento_data['status'] in [StatusAproveitamento.DEFERIDO, StatusAproveitamento.INDEFERIDO]:
+            aproveitamento_data['data_deferimento'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            fields.append('data_deferimento')
+    
+    # Gerar número de processo se for novo aproveitamento
+    if not aproveitamento_id:
+        # Formato: ANO/SEQUENCIAL-TIPO
+        ano_atual = datetime.datetime.now().year
+        
+        # Obter último número de processo do ano
+        c.execute("""
+        SELECT numero_processo FROM aproveitamentos 
+        WHERE numero_processo LIKE ? 
+        ORDER BY id DESC LIMIT 1
+        """, (f"{ano_atual}/%",))
+        
+        ultimo_processo = c.fetchone()
+        
+        if ultimo_processo and ultimo_processo[0]:
+            # Extrair sequencial
+            try:
+                sequencial = int(ultimo_processo[0].split('/')[1].split('-')[0]) + 1
+            except:
+                sequencial = 1
+        else:
+            sequencial = 1
+        
+        # Tipo abreviado
+        tipo_abrev = "D" if aproveitamento_data['tipo'] == TipoAproveitamento.DISCIPLINA else "I"
+        
+        # Gerar número de processo
+        aproveitamento_data['numero_processo'] = f"{ano_atual}/{sequencial:03d}-{tipo_abrev}"
+        fields.append('numero_processo')
+    
+    # Construir query
+    if aproveitamento_id:  # Atualizar
+        set_clause = ", ".join([f"{field} = ?" for field in fields])
+        query = f"UPDATE aproveitamentos SET {set_clause} WHERE id = ?"
+        values = [aproveitamento_data[field] for field in fields] + [aproveitamento_id]
+    else:  # Inserir
+        placeholders = ", ".join(["?" for _ in fields])
+        query = f"INSERT INTO aproveitamentos ({', '.join(fields)}) VALUES ({placeholders})"
+        values = [aproveitamento_data[field] for field in fields]
+    
+    c.execute(query, values)
     conn.commit()
     conn.close()
 
@@ -389,20 +318,19 @@ def delete_aproveitamento(aproveitamento_id):
     c = conn.cursor()
     
     c.execute("DELETE FROM aproveitamentos WHERE id = ?", (aproveitamento_id,))
+    
     conn.commit()
     conn.close()
-    return True
 
-# Função para calcular resumo de aproveitamentos
 def calcular_resumo_aproveitamentos(aluno_id):
-    aproveitamentos = get_aproveitamentos_by_aluno(aluno_id)
+    aproveitamentos = get_aproveitamentos_aluno(aluno_id)
     
     # Inicializar resumo
     resumo = {
         'disciplinas': {
             'total': 0,
             'creditos': 0,
-            'horas': 0,  # Considerando 15 horas por crédito
+            'horas': 0,
             'deferidos': 0,
             'pendentes': 0
         },
@@ -419,35 +347,34 @@ def calcular_resumo_aproveitamentos(aluno_id):
     
     # Processar cada aproveitamento
     for aprov in aproveitamentos:
-        # Verificar se está deferido
-        is_deferido = aprov['status'] == StatusAproveitamento.DEFERIDO
-        
         if aprov['tipo'] == TipoAproveitamento.DISCIPLINA:
+            # Adicionar ao resumo de disciplinas
             resumo['disciplinas']['total'] += 1
             
-            # Adicionar aos detalhes
+            # Adicionar detalhes
             resumo['detalhes']['disciplinas'].append({
                 'nome': aprov['nome_disciplina'],
                 'codigo': aprov['codigo_disciplina'],
                 'creditos': aprov['creditos'],
-                'horas': aprov['creditos'] * 15,
+                'horas': aprov['creditos'] * 15,  # 1 crédito = 15 horas
                 'instituicao': aprov['instituicao'],
                 'status': aprov['status'],
                 'processo': aprov['numero_processo']
             })
             
-            # Somar créditos e horas apenas se deferido
-            if is_deferido:
+            # Contabilizar se deferido
+            if aprov['status'] == StatusAproveitamento.DEFERIDO:
+                resumo['disciplinas']['deferidos'] += 1
                 resumo['disciplinas']['creditos'] += aprov['creditos']
                 resumo['disciplinas']['horas'] += aprov['creditos'] * 15
-                resumo['disciplinas']['deferidos'] += 1
             else:
                 resumo['disciplinas']['pendentes'] += 1
                 
         elif aprov['tipo'] == TipoAproveitamento.IDIOMA:
+            # Adicionar ao resumo de idiomas
             resumo['idiomas']['total'] += 1
             
-            # Adicionar aos detalhes
+            # Adicionar detalhes
             resumo['detalhes']['idiomas'].append({
                 'idioma': aprov['idioma'],
                 'nota': aprov['nota'],
@@ -456,8 +383,8 @@ def calcular_resumo_aproveitamentos(aluno_id):
                 'processo': aprov['numero_processo']
             })
             
-            # Contar aprovados
-            if is_deferido:
+            # Contabilizar se deferido
+            if aprov['status'] == StatusAproveitamento.DEFERIDO:
                 resumo['idiomas']['aprovados'] += 1
             else:
                 resumo['idiomas']['pendentes'] += 1
@@ -580,41 +507,350 @@ def display_header():
     header_image = Image.open('assets/header.jpg')
     st.image(header_image, use_container_width=True)
 
+# Função para gerar PDF do dashboard do aluno
+def gerar_pdf_dashboard(aluno, resumo):
+    # Criar gráficos para o PDF
+    disciplinas_fig = None
+    idiomas_fig = None
+    
+    # Gráfico de disciplinas
+    if resumo['disciplinas']['total'] > 0:
+        disciplinas_fig = plt.figure(figsize=(6, 4))
+        labels = ['Deferidas', 'Pendentes']
+        sizes = [resumo['disciplinas']['deferidos'], resumo['disciplinas']['pendentes']]
+        colors = ['#0A4C92', '#EBF5FF']
+        plt.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
+        plt.axis('equal')
+        plt.title('Status das Disciplinas')
+        
+        # Salvar gráfico em base64
+        buf = io.BytesIO()
+        disciplinas_fig.savefig(buf, format='png')
+        buf.seek(0)
+        disciplinas_img = base64.b64encode(buf.read()).decode('utf-8')
+        plt.close(disciplinas_fig)
+    else:
+        disciplinas_img = None
+    
+    # Gráfico de idiomas
+    if resumo['idiomas']['total'] > 0:
+        idiomas_fig = plt.figure(figsize=(6, 4))
+        labels = ['Aprovados', 'Pendentes']
+        sizes = [resumo['idiomas']['aprovados'], resumo['idiomas']['pendentes']]
+        colors = ['#0A4C92', '#EBF5FF']
+        plt.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
+        plt.axis('equal')
+        plt.title('Status dos Idiomas')
+        
+        # Salvar gráfico em base64
+        buf = io.BytesIO()
+        idiomas_fig.savefig(buf, format='png')
+        buf.seek(0)
+        idiomas_img = base64.b64encode(buf.read()).decode('utf-8')
+        plt.close(idiomas_fig)
+    else:
+        idiomas_img = None
+    
+    # Formatar datas
+    data_ingresso = datetime.datetime.strptime(aluno['data_ingresso'], '%Y-%m-%d').strftime('%d/%m/%Y') if aluno['data_ingresso'] else 'Não informada'
+    prazo_projeto = datetime.datetime.strptime(aluno['prazo_defesa_projeto'], '%Y-%m-%d').strftime('%d/%m/%Y') if aluno['prazo_defesa_projeto'] else 'Não informado'
+    prazo_tese = datetime.datetime.strptime(aluno['prazo_defesa_tese'], '%Y-%m-%d').strftime('%d/%m/%Y') if aluno['prazo_defesa_tese'] else 'Não informado'
+    
+    # Preparar tabelas de disciplinas e idiomas
+    disciplinas_html = ""
+    if resumo['detalhes']['disciplinas']:
+        disciplinas_html = "<table border='1' cellspacing='0' cellpadding='5' style='width:100%; border-collapse: collapse;'>"
+        disciplinas_html += "<tr style='background-color: #0A4C92; color: white;'><th>Disciplina</th><th>Código</th><th>Créditos</th><th>Horas</th><th>Instituição</th><th>Status</th><th>Processo</th></tr>"
+        
+        status_map = {
+            'solicitado': 'Solicitado',
+            'aprovado_coordenacao': 'Aprovado (Coord.)',
+            'aprovado_colegiado': 'Aprovado (Coleg.)',
+            'deferido': 'Deferido',
+            'indeferido': 'Indeferido'
+        }
+        
+        for i, disc in enumerate(resumo['detalhes']['disciplinas']):
+            bg_color = "#f2f2f2" if i % 2 == 0 else "white"
+            disciplinas_html += f"<tr style='background-color: {bg_color};'>"
+            disciplinas_html += f"<td>{disc['nome'] or '-'}</td>"
+            disciplinas_html += f"<td>{disc['codigo'] or '-'}</td>"
+            disciplinas_html += f"<td>{disc['creditos'] or 0}</td>"
+            disciplinas_html += f"<td>{disc['horas'] or 0}</td>"
+            disciplinas_html += f"<td>{disc['instituicao'] or '-'}</td>"
+            disciplinas_html += f"<td>{status_map.get(disc['status'], disc['status'])}</td>"
+            disciplinas_html += f"<td>{disc['processo'] or '-'}</td>"
+            disciplinas_html += "</tr>"
+        
+        disciplinas_html += "</table>"
+    
+    idiomas_html = ""
+    if resumo['detalhes']['idiomas']:
+        idiomas_html = "<table border='1' cellspacing='0' cellpadding='5' style='width:100%; border-collapse: collapse;'>"
+        idiomas_html += "<tr style='background-color: #0A4C92; color: white;'><th>Idioma</th><th>Nota</th><th>Instituição</th><th>Status</th><th>Processo</th></tr>"
+        
+        for i, idioma in enumerate(resumo['detalhes']['idiomas']):
+            bg_color = "#f2f2f2" if i % 2 == 0 else "white"
+            idiomas_html += f"<tr style='background-color: {bg_color};'>"
+            idiomas_html += f"<td>{idioma['idioma'] or '-'}</td>"
+            idiomas_html += f"<td>{idioma['nota'] or '-'}</td>"
+            idiomas_html += f"<td>{idioma['instituicao'] or '-'}</td>"
+            idiomas_html += f"<td>{status_map.get(idioma['status'], idioma['status'])}</td>"
+            idiomas_html += f"<td>{idioma['processo'] or '-'}</td>"
+            idiomas_html += "</tr>"
+        
+        idiomas_html += "</table>"
+    
+    # Template HTML para o PDF
+    html_template = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>Dashboard do Aluno - {{ aluno.nome }}</title>
+        <style>
+            body {
+                font-family: "Noto Sans CJK SC", "WenQuanYi Zen Hei", sans-serif;
+                color: #333;
+                line-height: 1.5;
+                margin: 0;
+                padding: 20px;
+            }
+            .header {
+                text-align: center;
+                margin-bottom: 30px;
+            }
+            .header h1 {
+                color: #0A4C92;
+                margin-bottom: 5px;
+            }
+            .header p {
+                color: #666;
+                font-size: 14px;
+            }
+            .section {
+                margin-bottom: 30px;
+            }
+            .section h2 {
+                color: #0A4C92;
+                border-bottom: 2px solid #0A4C92;
+                padding-bottom: 5px;
+                margin-bottom: 15px;
+            }
+            .info-card {
+                background-color: #EBF5FF;
+                border-left: 5px solid #0A4C92;
+                padding: 15px;
+                margin-bottom: 20px;
+                border-radius: 5px;
+            }
+            .info-card h3 {
+                color: #0A4C92;
+                margin-top: 0;
+                margin-bottom: 10px;
+            }
+            .info-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 20px;
+            }
+            .chart-container {
+                text-align: center;
+                margin: 20px 0;
+            }
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-bottom: 20px;
+            }
+            th, td {
+                padding: 8px;
+                text-align: left;
+                border: 1px solid #ddd;
+            }
+            th {
+                background-color: #0A4C92;
+                color: white;
+            }
+            tr:nth-child(even) {
+                background-color: #f2f2f2;
+            }
+            .footer {
+                text-align: center;
+                margin-top: 30px;
+                font-size: 12px;
+                color: #666;
+                border-top: 1px solid #ddd;
+                padding-top: 10px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>Dashboard do Aluno</h1>
+            <p>Programa de Pós-Graduação em Gestão de Organizações Públicas</p>
+            <p>Relatório gerado em {{ data_geracao }}</p>
+        </div>
+        
+        <div class="section">
+            <h2>Dados do Aluno</h2>
+            <div class="info-grid">
+                <div>
+                    <p><strong>Nome:</strong> {{ aluno.nome }}</p>
+                    <p><strong>Matrícula:</strong> {{ aluno.matricula or 'Não informada' }}</p>
+                    <p><strong>Email:</strong> {{ aluno.email }}</p>
+                    <p><strong>Orientador:</strong> {{ aluno.orientador or 'Não informado' }}</p>
+                </div>
+                <div>
+                    <p><strong>Linha de Pesquisa:</strong> {{ aluno.linha_pesquisa or 'Não informada' }}</p>
+                    <p><strong>Data de Ingresso:</strong> {{ data_ingresso }}</p>
+                    <p><strong>Turma:</strong> {{ aluno.turma or 'Não informada' }}</p>
+                    <p><strong>Prazo Defesa Projeto:</strong> {{ prazo_projeto }}</p>
+                    <p><strong>Prazo Defesa Tese:</strong> {{ prazo_tese }}</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Resumo de Aproveitamentos</h2>
+            <div class="info-grid">
+                <div class="info-card">
+                    <h3>Disciplinas</h3>
+                    <p><strong>Total de disciplinas:</strong> {{ resumo.disciplinas.total }}</p>
+                    <p><strong>Créditos aproveitados:</strong> {{ resumo.disciplinas.creditos }}</p>
+                    <p><strong>Horas aproveitadas:</strong> {{ resumo.disciplinas.horas }}</p>
+                    <p><strong>Disciplinas deferidas:</strong> {{ resumo.disciplinas.deferidos }}</p>
+                    <p><strong>Disciplinas pendentes:</strong> {{ resumo.disciplinas.pendentes }}</p>
+                </div>
+                <div class="info-card">
+                    <h3>Idiomas</h3>
+                    <p><strong>Total de idiomas:</strong> {{ resumo.idiomas.total }}</p>
+                    <p><strong>Idiomas aprovados:</strong> {{ resumo.idiomas.aprovados }}</p>
+                    <p><strong>Idiomas pendentes:</strong> {{ resumo.idiomas.pendentes }}</p>
+                </div>
+            </div>
+            
+            {% if disciplinas_img or idiomas_img %}
+            <h3>Gráficos de Aproveitamentos</h3>
+            <div class="info-grid">
+                {% if disciplinas_img %}
+                <div class="chart-container">
+                    <img src="data:image/png;base64,{{ disciplinas_img }}" alt="Gráfico de Disciplinas" style="max-width: 100%;">
+                </div>
+                {% endif %}
+                
+                {% if idiomas_img %}
+                <div class="chart-container">
+                    <img src="data:image/png;base64,{{ idiomas_img }}" alt="Gráfico de Idiomas" style="max-width: 100%;">
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+        
+        <div class="section">
+            <h2>Detalhes dos Aproveitamentos</h2>
+            
+            {% if disciplinas_html %}
+            <h3>Disciplinas</h3>
+            {{ disciplinas_html|safe }}
+            {% else %}
+            <p><em>Nenhuma disciplina cadastrada para este aluno.</em></p>
+            {% endif %}
+            
+            {% if idiomas_html %}
+            <h3>Idiomas</h3>
+            {{ idiomas_html|safe }}
+            {% else %}
+            <p><em>Nenhum idioma cadastrado para este aluno.</em></p>
+            {% endif %}
+        </div>
+        
+        <div class="footer">
+            <p>PPGOP - Sistema de Gestão de Alunos e Aproveitamento de Disciplinas</p>
+        </div>
+    </body>
+    </html>
+    """
+    
+    # Renderizar template
+    template = Template(html_template)
+    html_content = template.render(
+        aluno=aluno,
+        resumo=resumo,
+        data_geracao=datetime.datetime.now().strftime('%d/%m/%Y %H:%M'),
+        data_ingresso=data_ingresso,
+        prazo_projeto=prazo_projeto,
+        prazo_tese=prazo_tese,
+        disciplinas_img=disciplinas_img,
+        idiomas_img=idiomas_img,
+        disciplinas_html=disciplinas_html,
+        idiomas_html=idiomas_html
+    )
+    
+    # Gerar PDF
+    pdf = HTML(string=html_content).write_pdf(
+        stylesheets=[
+            CSS(string='''
+                @page {
+                    size: A4;
+                    margin: 1cm;
+                }
+                body {
+                    font-family: "Noto Sans CJK SC", "WenQuanYi Zen Hei", sans-serif;
+                }
+            ''')
+        ]
+    )
+    
+    return pdf
+
+# Função para criar link de download
+def get_download_link(pdf_bytes, filename):
+    b64 = base64.b64encode(pdf_bytes).decode()
+    href = f'<a href="data:application/pdf;base64,{b64}" download="{filename}" class="download-button">Baixar PDF</a>'
+    return href
+
+# Função para definir a página atual
+def set_page(page):
+    st.session_state.current_page = page
+
 # Inicializar banco de dados
 init_db()
 
 # Inicializar estado da sessão
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
-if 'user' not in st.session_state:
     st.session_state.user = None
-if 'current_page' not in st.session_state:
     st.session_state.current_page = 'alunos'
-
-# Função para alternar páginas
-def set_page(page):
-    st.session_state.current_page = page
+    st.session_state.show_aluno_form = False
+    st.session_state.editing_aluno = {}
+    st.session_state.show_aproveitamento_form = False
+    st.session_state.editing_aproveitamento = {}
 
 # Tela de login
 if not st.session_state.authenticated:
     # Exibir cabeçalho
     display_header()
     
-    col1, col2, col3 = st.columns([1, 2, 1])
+    st.markdown('<div style="font-size: 2rem; font-weight: bold; margin-bottom: 1rem; color: #0A4C92;">Login</div>', unsafe_allow_html=True)
     
-    with col2:
-        st.markdown('<h2 style="color: #0A4C92; text-align: center;">Login</h2>', unsafe_allow_html=True)
-        username = st.text_input("Usuário")
-        password = st.text_input("Senha", type="password")
-        
-        if st.button("Entrar"):
-            user = login(username, password)
-            if user:
-                st.session_state.authenticated = True
-                st.session_state.user = user
-                st.rerun()
-            else:
-                st.error("Usuário ou senha incorretos")
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        with st.form("login_form"):
+            username = st.text_input("Usuário")
+            password = st.text_input("Senha", type="password")
+            submitted = st.form_submit_button("Entrar")
+            
+            if submitted:
+                user = get_user(username, password)
+                if user:
+                    st.session_state.authenticated = True
+                    st.session_state.user = user
+                    st.rerun()
+                else:
+                    st.error("Usuário ou senha incorretos")
 
 # Interface principal após login
 else:
@@ -762,13 +998,10 @@ else:
                                              format_func=lambda x: next((a['nome'] for a in alunos if a['id'] == x), ''))
                 if st.button("Excluir Aluno"):
                     if st.session_state.get('confirm_delete', False):
-                        success = delete_aluno(aluno_id_delete)
-                        if success:
-                            st.success("Aluno excluído com sucesso!")
-                            st.session_state.confirm_delete = False
-                            st.rerun()
-                        else:
-                            st.error("Não é possível excluir este aluno pois existem aproveitamentos relacionados.")
+                        delete_aluno(aluno_id_delete)
+                        st.success("Aluno excluído com sucesso!")
+                        st.session_state.confirm_delete = False
+                        st.rerun()
                     else:
                         st.session_state.confirm_delete = True
                         st.warning("Tem certeza que deseja excluir este aluno? Esta ação não pode ser desfeita.")
@@ -776,13 +1009,10 @@ else:
                         col1, col2 = st.columns(2)
                         with col1:
                             if st.button("Sim, excluir"):
-                                success = delete_aluno(aluno_id_delete)
-                                if success:
-                                    st.success("Aluno excluído com sucesso!")
-                                    st.session_state.confirm_delete = False
-                                    st.rerun()
-                                else:
-                                    st.error("Não é possível excluir este aluno pois existem aproveitamentos relacionados.")
+                                delete_aluno(aluno_id_delete)
+                                st.success("Aluno excluído com sucesso!")
+                                st.session_state.confirm_delete = False
+                                st.rerun()
                         with col2:
                             if st.button("Cancelar"):
                                 st.session_state.confirm_delete = False
@@ -792,7 +1022,7 @@ else:
     
     # Página de Aproveitamentos
     elif st.session_state.current_page == 'aproveitamentos':
-        st.markdown('<div style="font-size: 2rem; font-weight: bold; margin-bottom: 1rem; color: #0A4C92;">Aproveitamentos de Disciplinas</div>', unsafe_allow_html=True)
+        st.markdown('<div style="font-size: 2rem; font-weight: bold; margin-bottom: 1rem; color: #0A4C92;">Gestão de Aproveitamentos</div>', unsafe_allow_html=True)
         
         # Botão para adicionar novo aproveitamento
         if st.button("➕ Novo Aproveitamento"):
@@ -1013,6 +1243,37 @@ else:
                 # Obter resumo de aproveitamentos
                 resumo = calcular_resumo_aproveitamentos(aluno_id)
                 
+                # Botão para exportar PDF
+                col1, col2 = st.columns([1, 5])
+                with col1:
+                    if st.button("📄 Exportar PDF"):
+                        with st.spinner("Gerando PDF..."):
+                            # Gerar PDF
+                            pdf_bytes = gerar_pdf_dashboard(aluno, resumo)
+                            
+                            # Criar link de download
+                            filename = f"dashboard_{aluno['nome'].replace(' ', '_')}_{datetime.datetime.now().strftime('%Y%m%d')}.pdf"
+                            st.markdown(get_download_link(pdf_bytes, filename), unsafe_allow_html=True)
+                            
+                            # Estilizar botão de download
+                            st.markdown("""
+                            <style>
+                            .download-button {
+                                display: inline-block;
+                                padding: 0.5em 1em;
+                                background-color: #0A4C92;
+                                color: white;
+                                text-decoration: none;
+                                border-radius: 4px;
+                                font-weight: bold;
+                                margin-top: 10px;
+                            }
+                            .download-button:hover {
+                                background-color: #083b73;
+                            }
+                            </style>
+                            """, unsafe_allow_html=True)
+                
                 # Exibir dados do aluno
                 st.markdown(f"### Dados do Aluno: {aluno['nome']}")
                 
@@ -1026,6 +1287,7 @@ else:
                 with col2:
                     st.markdown(f"**Linha de Pesquisa:** {aluno['linha_pesquisa'] or 'Não informada'}")
                     st.markdown(f"**Data de Ingresso:** {datetime.datetime.strptime(aluno['data_ingresso'], '%Y-%m-%d').strftime('%d/%m/%Y')}")
+                    st.markdown(f"**Turma:** {aluno['turma'] or 'Não informada'}")
                     st.markdown(f"**Prazo Defesa Projeto:** {datetime.datetime.strptime(aluno['prazo_defesa_projeto'], '%Y-%m-%d').strftime('%d/%m/%Y') if aluno['prazo_defesa_projeto'] else 'Não informado'}")
                     st.markdown(f"**Prazo Defesa Tese:** {datetime.datetime.strptime(aluno['prazo_defesa_tese'], '%Y-%m-%d').strftime('%d/%m/%Y') if aluno['prazo_defesa_tese'] else 'Não informado'}")
                 
@@ -1170,7 +1432,7 @@ else:
         Esta funcionalidade permite importar alunos a partir de um arquivo Excel.
         
         **Instruções:**
-        1. O arquivo Excel deve conter uma linha de cabeçalho com os campos: Matrícula, Nome, E-mail, Orientador(a), Linha de Pesquisa, Ingresso, Prazo defesa do Projeto, Prazo para Defesa da Tese
+        1. O arquivo Excel deve conter uma linha de cabeçalho com os campos: Matrícula, Nome, E-mail, Orientador(a), Linha de Pesquisa, Ingresso, Turma, Prazo defesa do Projeto, Prazo para Defesa da Tese
         2. Os alunos com e-mails já cadastrados serão ignorados para evitar duplicações
         3. Após o upload, será exibido um relatório com o resultado da importação
         """)
@@ -1197,10 +1459,3 @@ else:
                         if st.button("Ver Lista de Alunos"):
                             set_page('alunos')
                             st.rerun()
-
-# Adicionar rodapé com informações sobre o domínio personalizado
-st.markdown("""
-<div style="position: fixed; bottom: 0; left: 0; width: 100%; background-color: #0A4C92; color: white; text-align: center; padding: 10px; font-size: 0.8rem;">
-    Sistema de Gestão de Alunos PPGOP - Disponível em: cppgop.streamlit.app
-</div>
-""", unsafe_allow_html=True)
