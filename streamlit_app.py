@@ -9,6 +9,7 @@ import pandas as pd
 import sqlite3
 import datetime
 import hashlib
+import os
 from enum import Enum
 from PIL import Image
 
@@ -34,6 +35,11 @@ class StatusAproveitamento(str, Enum):
 
 # Inicializar banco de dados
 def init_db():
+    # Remover banco de dados existente para garantir estrutura limpa
+    if os.path.exists('ppgop.db'):
+        os.remove('ppgop.db')
+        print("Banco de dados antigo removido.")
+    
     conn = sqlite3.connect('ppgop.db')
     c = conn.cursor()
     
@@ -46,43 +52,24 @@ def init_db():
     )
     ''')
     
-    # Tabela de alunos
+    # Tabela de alunos com estrutura exata do Excel
     c.execute('''
     CREATE TABLE IF NOT EXISTS alunos (
         id INTEGER PRIMARY KEY,
         matricula TEXT UNIQUE,
+        nivel TEXT,
         nome TEXT NOT NULL,
         email TEXT NOT NULL,
         orientador TEXT,
         linha_pesquisa TEXT,
         data_ingresso DATE NOT NULL,
         turma TEXT,
-        nivel TEXT,
         prazo_defesa_projeto DATE,
         prazo_defesa_tese DATE,
         data_cadastro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         data_atualizacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     ''')
-    
-    # Verificar e adicionar colunas que possam estar faltando na tabela alunos
-    c.execute("PRAGMA table_info(alunos)")
-    colunas_existentes = [info[1] for info in c.fetchall()]
-    
-    # Lista de colunas que devem existir na tabela alunos
-    colunas_necessarias = {
-        'turma': 'TEXT',
-        'nivel': 'TEXT'
-    }
-    
-    # Adicionar colunas faltantes
-    for coluna, tipo in colunas_necessarias.items():
-        if coluna not in colunas_existentes:
-            try:
-                c.execute(f"ALTER TABLE alunos ADD COLUMN {coluna} {tipo}")
-                print(f"Coluna {coluna} adicionada à tabela alunos")
-            except Exception as e:
-                print(f"Erro ao adicionar coluna {coluna}: {str(e)}")
     
     # Tabela de aproveitamentos
     c.execute('''
@@ -121,30 +108,10 @@ def init_db():
     
     conn.commit()
     conn.close()
+    
+    print("Banco de dados inicializado com sucesso.")
 
-# Funções de acesso ao banco de dados
-def get_user(username, password):
-    conn = sqlite3.connect('ppgop.db')
-    c = conn.cursor()
-    
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-    c.execute("SELECT id, username FROM users WHERE username = ? AND password_hash = ?", (username, password_hash))
-    user = c.fetchone()
-    
-    conn.close()
-    return {"id": user[0], "username": user[1]} if user else None
-
-def get_alunos():
-    conn = sqlite3.connect('ppgop.db')
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    
-    c.execute("SELECT * FROM alunos ORDER BY nome")
-    alunos = [dict(row) for row in c.fetchall()]
-    
-    conn.close()
-    return alunos
-
+# Função para obter aluno por ID
 def get_aluno(aluno_id):
     conn = sqlite3.connect('ppgop.db')
     conn.row_factory = sqlite3.Row
@@ -164,26 +131,26 @@ def save_aluno(aluno_data, aluno_id=None):
         c.execute("""
         UPDATE alunos SET 
             matricula = ?,
+            nivel = ?,
             nome = ?,
             email = ?,
             orientador = ?,
             linha_pesquisa = ?,
             data_ingresso = ?,
             turma = ?,
-            nivel = ?,
             prazo_defesa_projeto = ?,
             prazo_defesa_tese = ?,
             data_atualizacao = CURRENT_TIMESTAMP
         WHERE id = ?
         """, (
             aluno_data['matricula'],
+            aluno_data['nivel'],
             aluno_data['nome'],
             aluno_data['email'],
             aluno_data['orientador'],
             aluno_data['linha_pesquisa'],
             aluno_data['data_ingresso'],
             aluno_data['turma'],
-            aluno_data['nivel'],
             aluno_data['prazo_defesa_projeto'],
             aluno_data['prazo_defesa_tese'],
             aluno_id
@@ -191,18 +158,18 @@ def save_aluno(aluno_data, aluno_id=None):
     else:  # Inserir
         c.execute("""
         INSERT INTO alunos (
-            matricula, nome, email, orientador, linha_pesquisa, 
-            data_ingresso, turma, nivel, prazo_defesa_projeto, prazo_defesa_tese
+            matricula, nivel, nome, email, orientador, linha_pesquisa, 
+            data_ingresso, turma, prazo_defesa_projeto, prazo_defesa_tese
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             aluno_data['matricula'],
+            aluno_data['nivel'],
             aluno_data['nome'],
             aluno_data['email'],
             aluno_data['orientador'],
             aluno_data['linha_pesquisa'],
             aluno_data['data_ingresso'],
             aluno_data['turma'],
-            aluno_data['nivel'],
             aluno_data['prazo_defesa_projeto'],
             aluno_data['prazo_defesa_tese']
         ))
@@ -222,139 +189,82 @@ def delete_aluno(aluno_id):
     conn.close()
     
     return True
-    
-    c.execute("DELETE FROM alunos WHERE id = ?", (aluno_id,))
-    
-    conn.commit()
-    conn.close()
 
-def get_aproveitamentos():
-    conn = sqlite3.connect('ppgop.db')
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    
-    c.execute("""
-    SELECT a.*, b.nome as aluno_nome 
-    FROM aproveitamentos a 
-    JOIN alunos b ON a.aluno_id = b.id 
-    ORDER BY a.data_solicitacao DESC
-    """)
-    aproveitamentos = [dict(row) for row in c.fetchall()]
-    
-    conn.close()
-    return aproveitamentos
-
-def get_aproveitamento(aproveitamento_id):
-    conn = sqlite3.connect('ppgop.db')
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    
-    c.execute("SELECT * FROM aproveitamentos WHERE id = ?", (aproveitamento_id,))
-    aproveitamento = c.fetchone()
-    
-    conn.close()
-    return dict(aproveitamento) if aproveitamento else None
-
-def get_aproveitamentos_aluno(aluno_id):
-    conn = sqlite3.connect('ppgop.db')
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    
-    c.execute("""
-    SELECT * FROM aproveitamentos 
-    WHERE aluno_id = ? 
-    ORDER BY data_solicitacao DESC
-    """, (aluno_id,))
-    aproveitamentos = [dict(row) for row in c.fetchall()]
-    
-    conn.close()
-    return aproveitamentos
-
+# Função para salvar aproveitamento
 def save_aproveitamento(aproveitamento_data, aproveitamento_id=None):
     conn = sqlite3.connect('ppgop.db')
     c = conn.cursor()
     
-    # Campos comuns
-    fields = [
-        'aluno_id', 'tipo', 'instituicao', 'observacoes', 'link_documentos'
-    ]
-    
-    # Adicionar campos específicos por tipo
-    if aproveitamento_data['tipo'] == TipoAproveitamento.DISCIPLINA:
-        fields.extend(['nome_disciplina', 'codigo_disciplina', 'creditos'])
-    elif aproveitamento_data['tipo'] == TipoAproveitamento.IDIOMA:
-        fields.extend(['idioma', 'nota'])
-    
-    # Adicionar status se estiver editando
-    if aproveitamento_id and 'status' in aproveitamento_data:
-        fields.append('status')
-        
-        # Atualizar campos de data com base no status
-        if aproveitamento_data['status'] == StatusAproveitamento.APROVADO_COORDENACAO:
-            aproveitamento_data['data_aprovacao_coordenacao'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            fields.append('data_aprovacao_coordenacao')
-        elif aproveitamento_data['status'] == StatusAproveitamento.APROVADO_COLEGIADO:
-            aproveitamento_data['data_aprovacao_colegiado'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            fields.append('data_aprovacao_colegiado')
-        elif aproveitamento_data['status'] in [StatusAproveitamento.DEFERIDO, StatusAproveitamento.INDEFERIDO]:
-            aproveitamento_data['data_deferimento'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            fields.append('data_deferimento')
-    
-    # Gerar número de processo se for novo aproveitamento
-    if not aproveitamento_id:
-        # Formato: ANO/SEQUENCIAL-TIPO
-        ano_atual = datetime.datetime.now().year
-        
-        # Obter último número de processo do ano
-        c.execute("""
-        SELECT numero_processo FROM aproveitamentos 
-        WHERE numero_processo LIKE ? 
-        ORDER BY id DESC LIMIT 1
-        """, (f"{ano_atual}/%",))
-        
-        ultimo_processo = c.fetchone()
-        
-        if ultimo_processo and ultimo_processo[0]:
-            # Extrair sequencial
-            try:
-                sequencial = int(ultimo_processo[0].split('/')[1].split('-')[0]) + 1
-            except:
-                sequencial = 1
-        else:
-            sequencial = 1
-        
-        # Tipo abreviado
-        tipo_abrev = "D" if aproveitamento_data['tipo'] == TipoAproveitamento.DISCIPLINA else "I"
-        
-        # Gerar número de processo
-        aproveitamento_data['numero_processo'] = f"{ano_atual}/{sequencial:03d}-{tipo_abrev}"
-        fields.append('numero_processo')
-    
-    # Construir query
     if aproveitamento_id:  # Atualizar
-        set_clause = ", ".join([f"{field} = ?" for field in fields])
-        query = f"UPDATE aproveitamentos SET {set_clause} WHERE id = ?"
-        values = [aproveitamento_data[field] for field in fields] + [aproveitamento_id]
+        c.execute("""
+        UPDATE aproveitamentos SET 
+            aluno_id = ?,
+            tipo = ?,
+            nome_disciplina = ?,
+            codigo_disciplina = ?,
+            creditos = ?,
+            idioma = ?,
+            nota = ?,
+            instituicao = ?,
+            observacoes = ?,
+            link_documentos = ?,
+            numero_processo = ?,
+            status = ?
+        WHERE id = ?
+        """, (
+            aproveitamento_data['aluno_id'],
+            aproveitamento_data['tipo'],
+            aproveitamento_data.get('nome_disciplina'),
+            aproveitamento_data.get('codigo_disciplina'),
+            aproveitamento_data.get('creditos'),
+            aproveitamento_data.get('idioma'),
+            aproveitamento_data.get('nota'),
+            aproveitamento_data.get('instituicao'),
+            aproveitamento_data.get('observacoes'),
+            aproveitamento_data.get('link_documentos'),
+            aproveitamento_data.get('numero_processo'),
+            aproveitamento_data.get('status', 'solicitado'),
+            aproveitamento_id
+        ))
     else:  # Inserir
-        placeholders = ", ".join(["?" for _ in fields])
-        query = f"INSERT INTO aproveitamentos ({', '.join(fields)}) VALUES ({placeholders})"
-        values = [aproveitamento_data[field] for field in fields]
+        c.execute("""
+        INSERT INTO aproveitamentos (
+            aluno_id, tipo, nome_disciplina, codigo_disciplina, creditos,
+            idioma, nota, instituicao, observacoes, link_documentos, numero_processo, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            aproveitamento_data['aluno_id'],
+            aproveitamento_data['tipo'],
+            aproveitamento_data.get('nome_disciplina'),
+            aproveitamento_data.get('codigo_disciplina'),
+            aproveitamento_data.get('creditos'),
+            aproveitamento_data.get('idioma'),
+            aproveitamento_data.get('nota'),
+            aproveitamento_data.get('instituicao'),
+            aproveitamento_data.get('observacoes'),
+            aproveitamento_data.get('link_documentos'),
+            aproveitamento_data.get('numero_processo'),
+            aproveitamento_data.get('status', 'solicitado')
+        ))
     
-    c.execute(query, values)
     conn.commit()
     conn.close()
 
-def delete_aproveitamento(aproveitamento_id):
+# Função para obter aproveitamentos de um aluno
+def get_aproveitamentos(aluno_id):
     conn = sqlite3.connect('ppgop.db')
+    conn.row_factory = sqlite3.Row
     c = conn.cursor()
     
-    c.execute("DELETE FROM aproveitamentos WHERE id = ?", (aproveitamento_id,))
+    c.execute("SELECT * FROM aproveitamentos WHERE aluno_id = ? ORDER BY data_solicitacao DESC", (aluno_id,))
+    aproveitamentos = [dict(row) for row in c.fetchall()]
     
-    conn.commit()
     conn.close()
+    return aproveitamentos
 
-def calcular_resumo_aproveitamentos(aluno_id):
-    aproveitamentos = get_aproveitamentos_aluno(aluno_id)
+# Função para obter resumo de aproveitamentos de um aluno
+def get_resumo_aproveitamentos(aluno_id):
+    aproveitamentos = get_aproveitamentos(aluno_id)
     
     # Inicializar resumo
     resumo = {
@@ -379,34 +289,29 @@ def calcular_resumo_aproveitamentos(aluno_id):
     # Processar cada aproveitamento
     for aprov in aproveitamentos:
         if aprov['tipo'] == TipoAproveitamento.DISCIPLINA:
-            # Adicionar ao resumo de disciplinas
-            resumo['disciplinas']['total'] += 1
-            
-            # Adicionar detalhes
             resumo['detalhes']['disciplinas'].append({
+                'id': aprov['id'],
                 'nome': aprov['nome_disciplina'],
                 'codigo': aprov['codigo_disciplina'],
                 'creditos': aprov['creditos'],
-                'horas': aprov['creditos'] * 15,  # 1 crédito = 15 horas
+                'horas': aprov['creditos'] * 15 if aprov['creditos'] else 0,  # 1 crédito = 15 horas
                 'instituicao': aprov['instituicao'],
                 'status': aprov['status'],
                 'processo': aprov['numero_processo']
             })
             
-            # Contabilizar se deferido
+            resumo['disciplinas']['total'] += 1
+            
             if aprov['status'] == StatusAproveitamento.DEFERIDO:
                 resumo['disciplinas']['deferidos'] += 1
-                resumo['disciplinas']['creditos'] += aprov['creditos']
-                resumo['disciplinas']['horas'] += aprov['creditos'] * 15
+                resumo['disciplinas']['creditos'] += aprov['creditos'] or 0
+                resumo['disciplinas']['horas'] += (aprov['creditos'] or 0) * 15
             else:
                 resumo['disciplinas']['pendentes'] += 1
                 
         elif aprov['tipo'] == TipoAproveitamento.IDIOMA:
-            # Adicionar ao resumo de idiomas
-            resumo['idiomas']['total'] += 1
-            
-            # Adicionar detalhes
             resumo['detalhes']['idiomas'].append({
+                'id': aprov['id'],
                 'idioma': aprov['idioma'],
                 'nota': aprov['nota'],
                 'instituicao': aprov['instituicao'],
@@ -414,7 +319,8 @@ def calcular_resumo_aproveitamentos(aluno_id):
                 'processo': aprov['numero_processo']
             })
             
-            # Contabilizar se deferido
+            resumo['idiomas']['total'] += 1
+            
             if aprov['status'] == StatusAproveitamento.DEFERIDO:
                 resumo['idiomas']['aprovados'] += 1
             else:
@@ -434,24 +340,10 @@ def import_alunos_from_excel(uploaded_file):
         dict: Estatísticas da importação (total, importados, ignorados)
     """
     # Ler o arquivo Excel
-    df = pd.read_excel(uploaded_file, header=None)
-    
-    # Encontrar a linha do cabeçalho (que contém "Matrícula", "Nome", etc.)
-    header_row = None
-    for i, row in df.iterrows():
-        if isinstance(row[0], str) and row[0].strip() == "Matrícula":
-            header_row = i
-            break
-    
-    if header_row is None:
-        return {"error": "Formato de arquivo inválido. Cabeçalho não encontrado."}
-    
-    # Extrair os dados a partir da linha após o cabeçalho
-    data_df = df.iloc[header_row+1:].copy()
-    data_df.columns = df.iloc[header_row]
+    df = pd.read_excel(uploaded_file)
     
     # Remover linhas sem nome (provavelmente vazias)
-    data_df = data_df[data_df["Nome"].notna()]
+    df = df[df["Nome"].notna()]
     
     # Conectar ao banco de dados
     conn = sqlite3.connect('ppgop.db')
@@ -459,14 +351,14 @@ def import_alunos_from_excel(uploaded_file):
     
     # Estatísticas
     stats = {
-        "total": len(data_df),
+        "total": len(df),
         "importados": 0,
         "ignorados": 0,
         "erros": []
     }
     
     # Inserir cada aluno no banco de dados
-    for _, row in data_df.iterrows():
+    for _, row in df.iterrows():
         try:
             # Verificar se o aluno já existe (pelo email)
             cursor.execute("SELECT id FROM alunos WHERE email = ?", (row["E-mail"],))
@@ -505,7 +397,7 @@ def import_alunos_from_excel(uploaded_file):
                 stats["erros"].append(f"Prazo de defesa de projeto inválido para {row['Nome']}")
                 
             try:
-                prazo_defesa_tese = pd.to_datetime(row["Prazo para Defesa da Tese"]).strftime('%Y-%m-%d') if pd.notna(row["Prazo para Defesa da Tese"]) else None
+                prazo_defesa_tese = pd.to_datetime(row["Prazo para Defesa da tese"]).strftime('%Y-%m-%d') if pd.notna(row["Prazo para Defesa da tese"]) else None
             except:
                 prazo_defesa_tese = None
                 stats["erros"].append(f"Prazo de defesa de tese inválido para {row['Nome']}")
@@ -513,18 +405,18 @@ def import_alunos_from_excel(uploaded_file):
             # Inserir aluno
             cursor.execute("""
             INSERT INTO alunos (
-                matricula, nome, email, orientador, linha_pesquisa, 
-                data_ingresso, turma, nivel, prazo_defesa_projeto, prazo_defesa_tese
+                matricula, nivel, nome, email, orientador, linha_pesquisa, 
+                data_ingresso, turma, prazo_defesa_projeto, prazo_defesa_tese
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 row["Matrícula"] if pd.notna(row["Matrícula"]) else None,
+                nivel,
                 row["Nome"],
                 row["E-mail"],
                 row["Orientador(a)"] if pd.notna(row["Orientador(a)"]) else None,
                 row["Linha de Pesquisa"] if pd.notna(row["Linha de Pesquisa"]) else None,
                 data_ingresso,
                 turma,
-                nivel,
                 prazo_defesa_projeto,
                 prazo_defesa_tese
             ))
@@ -769,89 +661,116 @@ def get_download_link(pdf_bytes, filename):
 def set_page(page):
     st.session_state.current_page = page
 
+# Função para verificar login
+def check_login(username, password):
+    conn = sqlite3.connect('ppgop.db')
+    c = conn.cursor()
+    
+    # Hash da senha
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    
+    # Verificar usuário e senha
+    c.execute("SELECT id FROM users WHERE username = ? AND password_hash = ?", (username, password_hash))
+    user = c.fetchone()
+    
+    conn.close()
+    
+    return user is not None
+
+# Inicializar sessão
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+
+if 'current_page' not in st.session_state:
+    st.session_state.current_page = 'login'
+
+if 'show_aluno_form' not in st.session_state:
+    st.session_state.show_aluno_form = False
+
+if 'editing_aluno' not in st.session_state:
+    st.session_state.editing_aluno = {}
+
+if 'show_aproveitamento_form' not in st.session_state:
+    st.session_state.show_aproveitamento_form = False
+
+if 'editing_aproveitamento' not in st.session_state:
+    st.session_state.editing_aproveitamento = {}
+
+if 'selected_aluno_id' not in st.session_state:
+    st.session_state.selected_aluno_id = None
+
+if 'confirm_delete' not in st.session_state:
+    st.session_state.confirm_delete = None
+
+if 'confirm_delete_name' not in st.session_state:
+    st.session_state.confirm_delete_name = None
+
 # Inicializar banco de dados
 init_db()
 
-# Inicializar estado da sessão
-if 'authenticated' not in st.session_state:
-    st.session_state.authenticated = False
-    st.session_state.user = None
-    st.session_state.current_page = 'alunos'
-    st.session_state.show_aluno_form = False
-    st.session_state.editing_aluno = {}
-    st.session_state.show_aproveitamento_form = False
-    st.session_state.editing_aproveitamento = {}
-
-# Tela de login
-if not st.session_state.authenticated:
-    # Exibir cabeçalho
-    display_header()
+# Aplicação principal
+if not st.session_state.logged_in:
+    # Página de login
+    st.title("PPGOP - Sistema de Gestão")
     
-    st.markdown('<div style="font-size: 2rem; font-weight: bold; margin-bottom: 1rem; color: #0A4C92;">Login</div>', unsafe_allow_html=True)
-    
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        with st.form("login_form"):
-            username = st.text_input("Usuário")
-            password = st.text_input("Senha", type="password")
-            submitted = st.form_submit_button("Entrar")
-            
-            if submitted:
-                user = get_user(username, password)
-                if user:
-                    st.session_state.authenticated = True
-                    st.session_state.user = user
-                    st.rerun()
-                else:
-                    st.error("Usuário ou senha incorretos")
-
-# Interface principal após login
+    # Formulário de login
+    with st.form("login_form"):
+        username = st.text_input("Usuário")
+        password = st.text_input("Senha", type="password")
+        submitted = st.form_submit_button("Entrar")
+        
+        if submitted:
+            if check_login(username, password):
+                st.session_state.logged_in = True
+                st.session_state.username = username
+                st.rerun()
+            else:
+                st.error("Usuário ou senha incorretos")
 else:
-    # Exibir cabeçalho
+    # Cabeçalho
     display_header()
     
-    # Barra superior
-    st.markdown(f'<div style="position: absolute; top: 0.5rem; right: 6rem; font-size: 0.9rem; color: #0A4C92; font-weight: bold;">Usuário: {st.session_state.user["username"]}</div>', unsafe_allow_html=True)
-    
-    # Sidebar para navegação
+    # Sidebar
     with st.sidebar:
-        st.markdown('<div style="font-size: 1.5rem; font-weight: bold; margin-bottom: 1rem; color: #0A4C92;">Menu</div>', unsafe_allow_html=True)
+        st.write(f"Usuário: {st.session_state.username}")
         
-        if st.button("Alunos", key="nav_alunos"):
+        # Menu
+        st.subheader("Menu")
+        if st.button("Alunos"):
             set_page('alunos')
+            st.session_state.show_aluno_form = False
+            st.session_state.show_aproveitamento_form = False
             st.rerun()
-        
-        if st.button("Aproveitamentos", key="nav_aproveitamentos"):
+            
+        if st.button("Aproveitamentos"):
             set_page('aproveitamentos')
+            st.session_state.show_aluno_form = False
+            st.session_state.show_aproveitamento_form = False
             st.rerun()
-        
-        if st.button("Dashboard", key="nav_dashboard"):
+            
+        if st.button("Dashboard"):
             set_page('dashboard')
+            st.session_state.show_aluno_form = False
+            st.session_state.show_aproveitamento_form = False
             st.rerun()
-        
-        if st.button("Importar Alunos", key="nav_importar"):
+            
+        if st.button("Importar Alunos"):
             set_page('importar')
+            st.session_state.show_aluno_form = False
+            st.session_state.show_aproveitamento_form = False
             st.rerun()
-        
-        st.markdown("---")
+            
         if st.button("Sair"):
-            st.session_state.authenticated = False
-            st.session_state.user = None
+            st.session_state.logged_in = False
             st.rerun()
     
-    # Página de Alunos
+    # Conteúdo principal
     if st.session_state.current_page == 'alunos':
-        st.markdown('<div style="font-size: 2rem; font-weight: bold; margin-bottom: 1rem; color: #0A4C92;">Gestão de Alunos</div>', unsafe_allow_html=True)
+        st.title("Gestão de Alunos")
         
-        # Botão para adicionar novo aluno
-        if st.button("➕ Novo Aluno"):
-            st.session_state.editing_aluno = {}
-            st.session_state.show_aluno_form = True
-        
-        # Formulário de aluno
-        if st.session_state.get('show_aluno_form', False):
-            st.markdown("### Cadastro de Aluno")
+        if st.session_state.show_aluno_form:
+            # Formulário de cadastro/edição de aluno
+            st.subheader("Cadastro de Aluno")
             
             with st.form("aluno_form"):
                 aluno_id = st.session_state.editing_aluno.get('id', None)
@@ -870,7 +789,7 @@ else:
                     turma = st.text_input("Turma", value=st.session_state.editing_aluno.get('turma', ''))
                     nivel = st.selectbox("Nível", 
                                        options=["Mestrado", "Doutorado"],
-                                       index=0 if st.session_state.editing_aluno.get('nivel') != "Doutorado" else 1)
+                                       index=1 if st.session_state.editing_aluno.get('nivel', '').lower() == "doutorado" else 0)
                     prazo_defesa_projeto = st.date_input("Prazo Defesa Projeto", 
                                                       value=datetime.datetime.strptime(st.session_state.editing_aluno.get('prazo_defesa_projeto', ''), '%Y-%m-%d').date() if st.session_state.editing_aluno.get('prazo_defesa_projeto') else None)
                     prazo_defesa_tese = st.date_input("Prazo Defesa Tese", 
@@ -890,13 +809,13 @@ else:
                     else:
                         aluno_data = {
                             'matricula': matricula,
+                            'nivel': nivel,
                             'nome': nome,
                             'email': email,
                             'orientador': orientador,
                             'linha_pesquisa': linha_pesquisa,
                             'data_ingresso': data_ingresso.strftime('%Y-%m-%d'),
                             'turma': turma,
-                            'nivel': nivel,
                             'prazo_defesa_projeto': prazo_defesa_projeto.strftime('%Y-%m-%d') if prazo_defesa_projeto else None,
                             'prazo_defesa_tese': prazo_defesa_tese.strftime('%Y-%m-%d') if prazo_defesa_tese else None
                         }
@@ -905,430 +824,239 @@ else:
                         st.session_state.show_aluno_form = False
                         st.success("Aluno salvo com sucesso!")
                         st.rerun()
-        
-        # Lista de alunos
-        alunos = get_alunos()
-        if alunos:
-            # Converter para DataFrame para exibição
-            df_alunos = pd.DataFrame(alunos)
+        else:
+            # Tabela de alunos
+            st.subheader("Alunos Cadastrados")
             
-            # Formatar datas
-            for col in ['data_ingresso', 'prazo_defesa_projeto', 'prazo_defesa_tese']:
-                if col in df_alunos.columns:
-                    df_alunos[col] = pd.to_datetime(df_alunos[col]).dt.strftime('%d/%m/%Y')
-            
-            # Selecionar e renomear colunas para exibição
-            cols_display = {
-                'id': 'ID',
-                'matricula': 'Matrícula',
-                'nome': 'Nome',
-                'email': 'Email',
-                'orientador': 'Orientador(a)',
-                'linha_pesquisa': 'Linha de Pesquisa',
-                'data_ingresso': 'Ingresso',
-                'turma': 'Turma',
-                'prazo_defesa_projeto': 'Prazo Projeto',
-                'prazo_defesa_tese': 'Prazo Defesa'
-            }
-            
-            df_display = df_alunos[list(cols_display.keys())].rename(columns=cols_display)
-            
-            # Exibir tabela
-            st.dataframe(df_display, hide_index=True)
-            
-            # Ações para cada aluno
-            col1, col2 = st.columns(2)
-            
+            # Botões de ação
+            col1, col2 = st.columns([1, 5])
             with col1:
-                aluno_id_edit = st.selectbox("Selecione um aluno para editar:", 
-                                           options=[a['id'] for a in alunos],
-                                           format_func=lambda x: next((a['nome'] for a in alunos if a['id'] == x), ''))
-                if st.button("Editar Aluno"):
-                    aluno = get_aluno(aluno_id_edit)
-                    if aluno:
-                        st.session_state.editing_aluno = aluno
-                        st.session_state.show_aluno_form = True
-                        st.rerun()
+                if st.button("➕ Novo Aluno"):
+                    st.session_state.show_aluno_form = True
+                    st.session_state.editing_aluno = {}
+                    st.rerun()
             
-            with col2:
-                aluno_id_delete = st.selectbox("Selecione um aluno para excluir:", 
-                                             options=[a['id'] for a in alunos],
-                                             format_func=lambda x: next((a['nome'] for a in alunos if a['id'] == x), ''))
-                if st.button("Excluir Aluno"):
-                    if st.session_state.get('confirm_delete', False):
-                        delete_aluno(aluno_id_delete)
-                        st.success("Aluno excluído com sucesso!")
-                        st.session_state.confirm_delete = False
-                        st.rerun()
-                    else:
-                        st.session_state.confirm_delete = True
-                        st.warning("Tem certeza que deseja excluir este aluno? Esta ação não pode ser desfeita.")
-                        
+            # Tabela de alunos
+            conn = sqlite3.connect('ppgop.db')
+            alunos_df = pd.read_sql_query("SELECT * FROM alunos ORDER BY nome", conn)
+            conn.close()
+            
+            if not alunos_df.empty:
+                # Formatar datas para exibição
+                for col in ['data_ingresso', 'prazo_defesa_projeto', 'prazo_defesa_tese']:
+                    alunos_df[col] = pd.to_datetime(alunos_df[col], errors='coerce').dt.strftime('%d/%m/%Y')
+                
+                # Renomear colunas para exibição
+                alunos_df = alunos_df.rename(columns={
+                    'matricula': 'Matrícula',
+                    'nivel': 'Nível',
+                    'nome': 'Nome',
+                    'email': 'Email',
+                    'orientador': 'Orientador',
+                    'linha_pesquisa': 'Linha de Pesquisa',
+                    'data_ingresso': 'Data de Ingresso',
+                    'turma': 'Turma',
+                    'prazo_defesa_projeto': 'Prazo Projeto',
+                    'prazo_defesa_tese': 'Prazo Tese'
+                })
+                
+                # Selecionar colunas para exibição
+                display_cols = ['Matrícula', 'Nível', 'Nome', 'Email', 'Orientador', 'Linha de Pesquisa', 'Data de Ingresso', 'Turma', 'Prazo Projeto', 'Prazo Tese']
+                
+                # Adicionar coluna de ações
+                alunos_df['Ações'] = None
+                
+                # Exibir tabela com formatação
+                for i, row in alunos_df.iterrows():
+                    cols = st.columns([1.5, 1.5, 3, 3, 3, 3, 2, 1.5, 2, 2, 2.5])
+                    
+                    for j, col in enumerate(display_cols):
+                        with cols[j]:
+                            st.write(row[col] if pd.notna(row[col]) else "-")
+                    
+                    with cols[-1]:
                         col1, col2 = st.columns(2)
                         with col1:
-                            if st.button("Sim, excluir"):
-                                delete_aluno(aluno_id_delete)
-                                st.success("Aluno excluído com sucesso!")
-                                st.session_state.confirm_delete = False
+                            if st.button("✏️", key=f"edit_{row['id']}"):
+                                # Converter para formato Python
+                                aluno = {
+                                    'id': row['id'],
+                                    'matricula': row['Matrícula'] if pd.notna(row['Matrícula']) else '',
+                                    'nivel': row['Nível'] if pd.notna(row['Nível']) else '',
+                                    'nome': row['Nome'],
+                                    'email': row['Email'],
+                                    'orientador': row['Orientador'] if pd.notna(row['Orientador']) else '',
+                                    'linha_pesquisa': row['Linha de Pesquisa'] if pd.notna(row['Linha de Pesquisa']) else '',
+                                    'data_ingresso': datetime.datetime.strptime(row['Data de Ingresso'], '%d/%m/%Y').strftime('%Y-%m-%d') if pd.notna(row['Data de Ingresso']) else None,
+                                    'turma': row['Turma'] if pd.notna(row['Turma']) else '',
+                                    'prazo_defesa_projeto': datetime.datetime.strptime(row['Prazo Projeto'], '%d/%m/%Y').strftime('%Y-%m-%d') if pd.notna(row['Prazo Projeto']) else None,
+                                    'prazo_defesa_tese': datetime.datetime.strptime(row['Prazo Tese'], '%d/%m/%Y').strftime('%Y-%m-%d') if pd.notna(row['Prazo Tese']) else None
+                                }
+                                st.session_state.editing_aluno = aluno
+                                st.session_state.show_aluno_form = True
                                 st.rerun()
                         with col2:
-                            if st.button("Cancelar"):
-                                st.session_state.confirm_delete = False
+                            if st.button("🗑️", key=f"delete_{row['id']}"):
+                                st.session_state.confirm_delete = row['id']
+                                st.session_state.confirm_delete_name = row['Nome']
                                 st.rerun()
-        else:
-            st.info("Nenhum aluno cadastrado.")
+                
+                # Confirmação de exclusão
+                if 'confirm_delete' in st.session_state and st.session_state.confirm_delete:
+                    st.warning(f"Tem certeza que deseja excluir o aluno {st.session_state.confirm_delete_name}? Esta ação não pode ser desfeita.")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("Sim, excluir"):
+                            delete_aluno(st.session_state.confirm_delete)
+                            st.session_state.confirm_delete = None
+                            st.session_state.confirm_delete_name = None
+                            st.success("Aluno excluído com sucesso!")
+                            st.rerun()
+                    with col2:
+                        if st.button("Cancelar"):
+                            st.session_state.confirm_delete = None
+                            st.session_state.confirm_delete_name = None
+                            st.rerun()
+            else:
+                st.info("Nenhum aluno cadastrado. Clique em 'Novo Aluno' para adicionar.")
     
-    # Página de Aproveitamentos
     elif st.session_state.current_page == 'aproveitamentos':
-        st.markdown('<div style="font-size: 2rem; font-weight: bold; margin-bottom: 1rem; color: #0A4C92;">Gestão de Aproveitamentos</div>', unsafe_allow_html=True)
-        
-        # Botão para adicionar novo aproveitamento
-        if st.button("➕ Novo Aproveitamento"):
-            st.session_state.editing_aproveitamento = {}
-            st.session_state.show_aproveitamento_form = True
-        
-        # Formulário de aproveitamento
-        if st.session_state.get('show_aproveitamento_form', False):
-            st.markdown("### Cadastro de Aproveitamento")
-            
-            with st.form("aproveitamento_form"):
-                aproveitamento_id = st.session_state.editing_aproveitamento.get('id', None)
-                
-                # Campos comuns
-                alunos = get_alunos()
-                aluno_options = {a['id']: a['nome'] for a in alunos}
-                
-                aluno_id = st.selectbox("Aluno", 
-                                      options=list(aluno_options.keys()),
-                                      format_func=lambda x: aluno_options.get(x, ''),
-                                      index=list(aluno_options.keys()).index(st.session_state.editing_aproveitamento.get('aluno_id')) if st.session_state.editing_aproveitamento.get('aluno_id') in aluno_options else 0)
-                
-                tipo = st.selectbox("Tipo de Aproveitamento",
-                                  options=[t.value for t in TipoAproveitamento],
-                                  format_func=lambda x: "Disciplina" if x == TipoAproveitamento.DISCIPLINA else "Idioma",
-                                  index=[t.value for t in TipoAproveitamento].index(st.session_state.editing_aproveitamento.get('tipo')) if st.session_state.editing_aproveitamento.get('tipo') in [t.value for t in TipoAproveitamento] else 0)
-                
-                # Campos específicos por tipo
-                if tipo == TipoAproveitamento.DISCIPLINA:
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        nome_disciplina = st.text_input("Nome da Disciplina", value=st.session_state.editing_aproveitamento.get('nome_disciplina', ''))
-                    with col2:
-                        codigo_disciplina = st.text_input("Código da Disciplina", value=st.session_state.editing_aproveitamento.get('codigo_disciplina', ''))
-                    creditos = st.number_input("Créditos", min_value=1, value=int(st.session_state.editing_aproveitamento.get('creditos', 1)))
-                elif tipo == TipoAproveitamento.IDIOMA:
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        idioma = st.selectbox("Idioma", 
-                                            options=["Inglês", "Espanhol", "Francês", "Alemão", "Italiano"],
-                                            index=["Inglês", "Espanhol", "Francês", "Alemão", "Italiano"].index(st.session_state.editing_aproveitamento.get('idioma')) if st.session_state.editing_aproveitamento.get('idioma') in ["Inglês", "Espanhol", "Francês", "Alemão", "Italiano"] else 0)
-                    with col2:
-                        nota = st.number_input("Nota", min_value=0.0, max_value=10.0, value=float(st.session_state.editing_aproveitamento.get('nota', 0.0)), step=0.1)
-                
-                # Campos comuns adicionais
-                instituicao = st.text_input("Instituição", value=st.session_state.editing_aproveitamento.get('instituicao', ''))
-                observacoes = st.text_area("Observações", value=st.session_state.editing_aproveitamento.get('observacoes', ''))
-                link_documentos = st.text_input("Link para Documentos (Google Drive)", value=st.session_state.editing_aproveitamento.get('link_documentos', ''))
-                
-                # Campo de status (apenas para edição)
-                if aproveitamento_id:
-                    status = st.selectbox("Status",
-                                        options=[s.value for s in StatusAproveitamento],
-                                        format_func=lambda x: {
-                                            'solicitado': 'Solicitado',
-                                            'aprovado_coordenacao': 'Aprovado pela Coordenação',
-                                            'aprovado_colegiado': 'Aprovado pelo Colegiado',
-                                            'deferido': 'Deferido',
-                                            'indeferido': 'Indeferido'
-                                        }.get(x, x),
-                                        index=[s.value for s in StatusAproveitamento].index(st.session_state.editing_aproveitamento.get('status')) if st.session_state.editing_aproveitamento.get('status') in [s.value for s in StatusAproveitamento] else 0)
-                
-                col1, col2 = st.columns([1, 4])
-                with col1:
-                    submitted = st.form_submit_button("Salvar")
-                with col2:
-                    if st.form_submit_button("Cancelar"):
-                        st.session_state.show_aproveitamento_form = False
-                        st.rerun()
-                
-                if submitted:
-                    # Validação básica
-                    if not aluno_id:
-                        st.error("Selecione um aluno")
-                    elif tipo == TipoAproveitamento.DISCIPLINA and not nome_disciplina:
-                        st.error("Nome da disciplina é obrigatório")
-                    elif tipo == TipoAproveitamento.IDIOMA and not idioma:
-                        st.error("Idioma é obrigatório")
-                    else:
-                        # Preparar dados
-                        aproveitamento_data = {
-                            'aluno_id': aluno_id,
-                            'tipo': tipo,
-                            'instituicao': instituicao,
-                            'observacoes': observacoes,
-                            'link_documentos': link_documentos
-                        }
-                        
-                        # Adicionar campos específicos por tipo
-                        if tipo == TipoAproveitamento.DISCIPLINA:
-                            aproveitamento_data.update({
-                                'nome_disciplina': nome_disciplina,
-                                'codigo_disciplina': codigo_disciplina,
-                                'creditos': creditos
-                            })
-                        elif tipo == TipoAproveitamento.IDIOMA:
-                            aproveitamento_data.update({
-                                'idioma': idioma,
-                                'nota': nota
-                            })
-                        
-                        # Adicionar status se estiver editando
-                        if aproveitamento_id:
-                            aproveitamento_data['status'] = status
-                        
-                        # Salvar
-                        save_aproveitamento(aproveitamento_data, aproveitamento_id)
-                        st.session_state.show_aproveitamento_form = False
-                        st.success("Aproveitamento salvo com sucesso!")
-                        st.rerun()
-        
-        # Lista de aproveitamentos
-        aproveitamentos = get_aproveitamentos()
-        if aproveitamentos:
-            # Converter para DataFrame para exibição
-            df_aproveitamentos = pd.DataFrame(aproveitamentos)
-            
-            # Formatar datas
-            for col in ['data_solicitacao', 'data_aprovacao_coordenacao', 'data_aprovacao_colegiado', 'data_deferimento']:
-                if col in df_aproveitamentos.columns:
-                    df_aproveitamentos[col] = pd.to_datetime(df_aproveitamentos[col]).dt.strftime('%d/%m/%Y')
-            
-            # Adicionar colunas formatadas
-            df_aproveitamentos['tipo_formatado'] = df_aproveitamentos['tipo'].apply(lambda x: "Disciplina" if x == TipoAproveitamento.DISCIPLINA else "Idioma")
-            
-            df_aproveitamentos['disciplina_idioma'] = df_aproveitamentos.apply(
-                lambda row: row['nome_disciplina'] if row['tipo'] == TipoAproveitamento.DISCIPLINA 
-                else f"{row['idioma']} (Nota: {row['nota']})", axis=1
-            )
-            
-            df_aproveitamentos['status_formatado'] = df_aproveitamentos['status'].apply(
-                lambda x: {
-                    'solicitado': 'Solicitado',
-                    'aprovado_coordenacao': 'Aprovado (Coord.)',
-                    'aprovado_colegiado': 'Aprovado (Coleg.)',
-                    'deferido': 'Deferido',
-                    'indeferido': 'Indeferido'
-                }.get(x, x)
-            )
-            
-            # Selecionar e renomear colunas para exibição
-            cols_display = {
-                'id': 'ID',
-                'aluno_nome': 'Aluno',
-                'tipo_formatado': 'Tipo',
-                'disciplina_idioma': 'Disciplina/Idioma',
-                'numero_processo': 'Processo',
-                'status_formatado': 'Status',
-                'data_solicitacao': 'Data Solicitação'
-            }
-            
-            df_display = df_aproveitamentos[list(cols_display.keys())].rename(columns=cols_display)
-            
-            # Exibir tabela
-            st.dataframe(df_display, hide_index=True)
-            
-            # Ações para cada aproveitamento
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                aproveitamento_id_edit = st.selectbox("Selecione um aproveitamento para editar:", 
-                                                    options=[a['id'] for a in aproveitamentos],
-                                                    format_func=lambda x: f"{next((a['aluno_nome'] for a in aproveitamentos if a['id'] == x), '')} - {next((a['disciplina_idioma'] for a in aproveitamentos if a['id'] == x), '')}")
-                if st.button("Editar Aproveitamento"):
-                    aproveitamento = get_aproveitamento(aproveitamento_id_edit)
-                    if aproveitamento:
-                        st.session_state.editing_aproveitamento = aproveitamento
-                        st.session_state.show_aproveitamento_form = True
-                        st.rerun()
-            
-            with col2:
-                aproveitamento_id_delete = st.selectbox("Selecione um aproveitamento para excluir:", 
-                                                      options=[a['id'] for a in aproveitamentos],
-                                                      format_func=lambda x: f"{next((a['aluno_nome'] for a in aproveitamentos if a['id'] == x), '')} - {next((a['disciplina_idioma'] for a in aproveitamentos if a['id'] == x), '')}")
-                if st.button("Excluir Aproveitamento"):
-                    if st.session_state.get('confirm_delete_aproveitamento', False):
-                        delete_aproveitamento(aproveitamento_id_delete)
-                        st.success("Aproveitamento excluído com sucesso!")
-                        st.session_state.confirm_delete_aproveitamento = False
-                        st.rerun()
-                    else:
-                        st.session_state.confirm_delete_aproveitamento = True
-                        st.warning("Tem certeza que deseja excluir este aproveitamento? Esta ação não pode ser desfeita.")
-                        
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            if st.button("Sim, excluir"):
-                                delete_aproveitamento(aproveitamento_id_delete)
-                                st.success("Aproveitamento excluído com sucesso!")
-                                st.session_state.confirm_delete_aproveitamento = False
-                                st.rerun()
-                        with col2:
-                            if st.button("Cancelar"):
-                                st.session_state.confirm_delete_aproveitamento = False
-                                st.rerun()
-        else:
-            st.info("Nenhum aproveitamento cadastrado.")
-    
-    # Página de Dashboard
-    elif st.session_state.current_page == 'dashboard':
-        st.markdown('<div style="font-size: 2rem; font-weight: bold; margin-bottom: 1rem; color: #0A4C92;">Dashboard de Alunos</div>', unsafe_allow_html=True)
+        st.title("Aproveitamentos de Disciplinas e Idiomas")
         
         # Selecionar aluno
-        alunos = get_alunos()
-        if not alunos:
-            st.info("Nenhum aluno cadastrado para exibir no dashboard.")
+        conn = sqlite3.connect('ppgop.db')
+        alunos_df = pd.read_sql_query("SELECT id, nome FROM alunos ORDER BY nome", conn)
+        conn.close()
+        
+        if alunos_df.empty:
+            st.warning("Nenhum aluno cadastrado. Cadastre um aluno primeiro.")
         else:
-            aluno_options = {a['id']: a['nome'] for a in alunos}
+            aluno_options = alunos_df['nome'].tolist()
+            aluno_ids = alunos_df['id'].tolist()
             
-            aluno_id = st.selectbox("Selecione um aluno:", 
-                                  options=list(aluno_options.keys()),
-                                  format_func=lambda x: aluno_options.get(x, ''))
+            selected_aluno_name = st.selectbox("Selecione um aluno", aluno_options)
+            selected_aluno_index = aluno_options.index(selected_aluno_name)
+            selected_aluno_id = aluno_ids[selected_aluno_index]
             
-            if aluno_id:
-                # Obter dados do aluno
-                aluno = get_aluno(aluno_id)
+            st.session_state.selected_aluno_id = selected_aluno_id
+            
+            # Exibir aproveitamentos do aluno
+            aproveitamentos = get_aproveitamentos(selected_aluno_id)
+            
+            # Botões de ação
+            col1, col2, col3 = st.columns([1, 1, 4])
+            with col1:
+                if st.button("➕ Nova Disciplina"):
+                    st.session_state.show_aproveitamento_form = True
+                    st.session_state.editing_aproveitamento = {
+                        'aluno_id': selected_aluno_id,
+                        'tipo': TipoAproveitamento.DISCIPLINA
+                    }
+                    st.rerun()
+            with col2:
+                if st.button("➕ Novo Idioma"):
+                    st.session_state.show_aproveitamento_form = True
+                    st.session_state.editing_aproveitamento = {
+                        'aluno_id': selected_aluno_id,
+                        'tipo': TipoAproveitamento.IDIOMA
+                    }
+                    st.rerun()
+            
+            if st.session_state.show_aproveitamento_form:
+                # Formulário de cadastro/edição de aproveitamento
+                tipo = st.session_state.editing_aproveitamento.get('tipo', TipoAproveitamento.DISCIPLINA)
+                aproveitamento_id = st.session_state.editing_aproveitamento.get('id', None)
                 
-                # Obter resumo de aproveitamentos
-                resumo = calcular_resumo_aproveitamentos(aluno_id)
+                if tipo == TipoAproveitamento.DISCIPLINA:
+                    st.subheader("Cadastro de Aproveitamento de Disciplina")
+                else:
+                    st.subheader("Cadastro de Aproveitamento de Idioma")
                 
-                # Botão para exportar PDF
-                col1, col2 = st.columns([1, 5])
-                with col1:
-                    if st.button("📄 Exportar PDF"):
-                        with st.spinner("Gerando PDF..."):
-                            # Gerar PDF
-                            pdf_bytes = gerar_pdf_dashboard(aluno, resumo)
-                            
-                            # Criar link de download
-                            filename = f"dashboard_{aluno['nome'].replace(' ', '_')}_{datetime.datetime.now().strftime('%Y%m%d')}.pdf"
-                            st.markdown(get_download_link(pdf_bytes, filename), unsafe_allow_html=True)
-                            
-                            # Estilizar botão de download
-                            st.markdown("""
-                            <style>
-                            .download-button {
-                                display: inline-block;
-                                padding: 0.5em 1em;
-                                background-color: #0A4C92;
-                                color: white;
-                                text-decoration: none;
-                                border-radius: 4px;
-                                font-weight: bold;
-                                margin-top: 10px;
-                            }
-                            .download-button:hover {
-                                background-color: #083b73;
-                            }
-                            </style>
-                            """, unsafe_allow_html=True)
-                
-                # Exibir dados do aluno
-                st.markdown(f"### Dados do Aluno: {aluno['nome']}")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown(f"**Matrícula:** {aluno['matricula'] or 'Não informada'}")
-                    st.markdown(f"**Email:** {aluno['email']}")
-                    st.markdown(f"**Orientador:** {aluno['orientador'] or 'Não informado'}")
-                
-                with col2:
-                    st.markdown(f"**Linha de Pesquisa:** {aluno['linha_pesquisa'] or 'Não informada'}")
-                    st.markdown(f"**Data de Ingresso:** {datetime.datetime.strptime(aluno['data_ingresso'], '%Y-%m-%d').strftime('%d/%m/%Y')}")
-                    st.markdown(f"**Turma:** {aluno['turma'] or 'Não informada'}")
-                    st.markdown(f"**Prazo Defesa Projeto:** {datetime.datetime.strptime(aluno['prazo_defesa_projeto'], '%Y-%m-%d').strftime('%d/%m/%Y') if aluno['prazo_defesa_projeto'] else 'Não informado'}")
-                    st.markdown(f"**Prazo Defesa Tese:** {datetime.datetime.strptime(aluno['prazo_defesa_tese'], '%Y-%m-%d').strftime('%d/%m/%Y') if aluno['prazo_defesa_tese'] else 'Não informado'}")
-                
-                # Exibir resumo de aproveitamentos
-                st.markdown("### Resumo de Aproveitamentos")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    # Card para disciplinas
-                    st.markdown("""
-                    <div style="background-color: #EBF5FF; padding: 15px; border-radius: 5px; border-left: 5px solid #0A4C92;">
-                        <h4 style="color: #0A4C92; margin-top: 0;">Disciplinas</h4>
-                    """, unsafe_allow_html=True)
-                    
-                    st.markdown(f"**Total de disciplinas:** {resumo['disciplinas']['total']}")
-                    st.markdown(f"**Créditos aproveitados:** {resumo['disciplinas']['creditos']}")
-                    st.markdown(f"**Horas aproveitadas:** {resumo['disciplinas']['horas']}")
-                    st.markdown(f"**Disciplinas deferidas:** {resumo['disciplinas']['deferidos']}")
-                    st.markdown(f"**Disciplinas pendentes:** {resumo['disciplinas']['pendentes']}")
-                    
-                    st.markdown("</div>", unsafe_allow_html=True)
-                
-                with col2:
-                    # Card para idiomas
-                    st.markdown("""
-                    <div style="background-color: #EBF5FF; padding: 15px; border-radius: 5px; border-left: 5px solid #0A4C92;">
-                        <h4 style="color: #0A4C92; margin-top: 0;">Idiomas</h4>
-                    """, unsafe_allow_html=True)
-                    
-                    st.markdown(f"**Total de idiomas:** {resumo['idiomas']['total']}")
-                    st.markdown(f"**Idiomas aprovados:** {resumo['idiomas']['aprovados']}")
-                    st.markdown(f"**Idiomas pendentes:** {resumo['idiomas']['pendentes']}")
-                    
-                    st.markdown("</div>", unsafe_allow_html=True)
-                
-                # Gráfico de aproveitamentos
-                if resumo['disciplinas']['total'] > 0 or resumo['idiomas']['total'] > 0:
-                    st.markdown("### Gráficos de Aproveitamentos")
-                    
+                with st.form("aproveitamento_form"):
                     col1, col2 = st.columns(2)
                     
+                    if tipo == TipoAproveitamento.DISCIPLINA:
+                        with col1:
+                            nome_disciplina = st.text_input("Nome da Disciplina", value=st.session_state.editing_aproveitamento.get('nome_disciplina', ''))
+                            codigo_disciplina = st.text_input("Código da Disciplina", value=st.session_state.editing_aproveitamento.get('codigo_disciplina', ''))
+                            creditos = st.number_input("Créditos", min_value=0, value=st.session_state.editing_aproveitamento.get('creditos', 0))
+                            instituicao = st.text_input("Instituição", value=st.session_state.editing_aproveitamento.get('instituicao', ''))
+                        
+                        with col2:
+                            observacoes = st.text_area("Observações", value=st.session_state.editing_aproveitamento.get('observacoes', ''))
+                            link_documentos = st.text_input("Link para Documentos", value=st.session_state.editing_aproveitamento.get('link_documentos', ''))
+                            numero_processo = st.text_input("Número do Processo", value=st.session_state.editing_aproveitamento.get('numero_processo', ''))
+                            status = st.selectbox("Status", 
+                                               options=[s.value for s in StatusAproveitamento],
+                                               index=[s.value for s in StatusAproveitamento].index(st.session_state.editing_aproveitamento.get('status', 'solicitado')) if st.session_state.editing_aproveitamento.get('status') in [s.value for s in StatusAproveitamento] else 0)
+                    else:  # Idioma
+                        with col1:
+                            idioma = st.text_input("Idioma", value=st.session_state.editing_aproveitamento.get('idioma', ''))
+                            nota = st.number_input("Nota", min_value=0.0, max_value=10.0, value=float(st.session_state.editing_aproveitamento.get('nota', 0.0)))
+                            instituicao = st.text_input("Instituição", value=st.session_state.editing_aproveitamento.get('instituicao', ''))
+                        
+                        with col2:
+                            observacoes = st.text_area("Observações", value=st.session_state.editing_aproveitamento.get('observacoes', ''))
+                            link_documentos = st.text_input("Link para Documentos", value=st.session_state.editing_aproveitamento.get('link_documentos', ''))
+                            numero_processo = st.text_input("Número do Processo", value=st.session_state.editing_aproveitamento.get('numero_processo', ''))
+                            status = st.selectbox("Status", 
+                                               options=[s.value for s in StatusAproveitamento],
+                                               index=[s.value for s in StatusAproveitamento].index(st.session_state.editing_aproveitamento.get('status', 'solicitado')) if st.session_state.editing_aproveitamento.get('status') in [s.value for s in StatusAproveitamento] else 0)
+                    
+                    col1, col2 = st.columns([1, 4])
                     with col1:
-                        # Gráfico de disciplinas
-                        if resumo['disciplinas']['total'] > 0:
-                            fig, ax = plt.subplots(figsize=(8, 5))
-                            
-                            labels = ['Deferidas', 'Pendentes']
-                            sizes = [resumo['disciplinas']['deferidos'], resumo['disciplinas']['pendentes']]
-                            colors = ['#0A4C92', '#EBF5FF']
-                            
-                            ax.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
-                            ax.axis('equal')
-                            plt.title('Status das Disciplinas')
-                            
-                            st.pyplot(fig)
-                    
+                        submitted = st.form_submit_button("Salvar")
                     with col2:
-                        # Gráfico de idiomas
-                        if resumo['idiomas']['total'] > 0:
-                            fig, ax = plt.subplots(figsize=(8, 5))
-                            
-                            labels = ['Aprovados', 'Pendentes']
-                            sizes = [resumo['idiomas']['aprovados'], resumo['idiomas']['pendentes']]
-                            colors = ['#0A4C92', '#EBF5FF']
-                            
-                            ax.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
-                            ax.axis('equal')
-                            plt.title('Status dos Idiomas')
-                            
-                            st.pyplot(fig)
-                
-                # Detalhes dos aproveitamentos
-                st.markdown("### Detalhes dos Aproveitamentos")
-                
-                # Disciplinas
-                if resumo['detalhes']['disciplinas']:
-                    st.markdown("#### Disciplinas")
+                        if st.form_submit_button("Cancelar"):
+                            st.session_state.show_aproveitamento_form = False
+                            st.rerun()
                     
-                    # Converter para DataFrame
-                    df_disciplinas = pd.DataFrame(resumo['detalhes']['disciplinas'])
+                    if submitted:
+                        if tipo == TipoAproveitamento.DISCIPLINA and not nome_disciplina:
+                            st.error("Nome da disciplina é obrigatório")
+                        elif tipo == TipoAproveitamento.IDIOMA and not idioma:
+                            st.error("Idioma é obrigatório")
+                        else:
+                            aproveitamento_data = {
+                                'aluno_id': selected_aluno_id,
+                                'tipo': tipo,
+                                'status': status
+                            }
+                            
+                            if tipo == TipoAproveitamento.DISCIPLINA:
+                                aproveitamento_data.update({
+                                    'nome_disciplina': nome_disciplina,
+                                    'codigo_disciplina': codigo_disciplina,
+                                    'creditos': creditos,
+                                    'instituicao': instituicao,
+                                    'observacoes': observacoes,
+                                    'link_documentos': link_documentos,
+                                    'numero_processo': numero_processo
+                                })
+                            else:  # Idioma
+                                aproveitamento_data.update({
+                                    'idioma': idioma,
+                                    'nota': nota,
+                                    'instituicao': instituicao,
+                                    'observacoes': observacoes,
+                                    'link_documentos': link_documentos,
+                                    'numero_processo': numero_processo
+                                })
+                            
+                            save_aproveitamento(aproveitamento_data, aproveitamento_id)
+                            st.session_state.show_aproveitamento_form = False
+                            st.success("Aproveitamento salvo com sucesso!")
+                            st.rerun()
+            else:
+                # Exibir aproveitamentos
+                if not aproveitamentos:
+                    st.info("Nenhum aproveitamento cadastrado para este aluno.")
+                else:
+                    # Separar por tipo
+                    disciplinas = [a for a in aproveitamentos if a['tipo'] == TipoAproveitamento.DISCIPLINA]
+                    idiomas = [a for a in aproveitamentos if a['tipo'] == TipoAproveitamento.IDIOMA]
                     
-                    # Formatar status
+                    # Mapeamento de status
                     status_map = {
                         'solicitado': 'Solicitado',
                         'aprovado_coordenacao': 'Aprovado (Coord.)',
@@ -1336,10 +1064,180 @@ else:
                         'deferido': 'Deferido',
                         'indeferido': 'Indeferido'
                     }
-                    df_disciplinas['status'] = df_disciplinas['status'].map(status_map)
+                    
+                    # Exibir disciplinas
+                    if disciplinas:
+                        st.subheader("Disciplinas")
+                        for i, disc in enumerate(disciplinas):
+                            with st.expander(f"{disc['nome_disciplina']} ({disc['codigo_disciplina'] or 'Sem código'})"):
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.write(f"**Créditos:** {disc['creditos'] or 0}")
+                                    st.write(f"**Instituição:** {disc['instituicao'] or '-'}")
+                                    st.write(f"**Status:** {status_map.get(disc['status'], disc['status'])}")
+                                with col2:
+                                    st.write(f"**Processo:** {disc['numero_processo'] or '-'}")
+                                    st.write(f"**Observações:** {disc['observacoes'] or '-'}")
+                                    if disc['link_documentos']:
+                                        st.write(f"**Documentos:** [Link]({disc['link_documentos']})")
+                                
+                                # Botões de ação
+                                col1, col2 = st.columns([1, 5])
+                                with col1:
+                                    if st.button("Editar", key=f"edit_disc_{disc['id']}"):
+                                        st.session_state.show_aproveitamento_form = True
+                                        st.session_state.editing_aproveitamento = disc
+                                        st.rerun()
+                    
+                    # Exibir idiomas
+                    if idiomas:
+                        st.subheader("Idiomas")
+                        for i, idioma in enumerate(idiomas):
+                            with st.expander(f"{idioma['idioma']} (Nota: {idioma['nota'] or '-'})"):
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.write(f"**Instituição:** {idioma['instituicao'] or '-'}")
+                                    st.write(f"**Status:** {status_map.get(idioma['status'], idioma['status'])}")
+                                with col2:
+                                    st.write(f"**Processo:** {idioma['numero_processo'] or '-'}")
+                                    st.write(f"**Observações:** {idioma['observacoes'] or '-'}")
+                                    if idioma['link_documentos']:
+                                        st.write(f"**Documentos:** [Link]({idioma['link_documentos']})")
+                                
+                                # Botões de ação
+                                col1, col2 = st.columns([1, 5])
+                                with col1:
+                                    if st.button("Editar", key=f"edit_idioma_{idioma['id']}"):
+                                        st.session_state.show_aproveitamento_form = True
+                                        st.session_state.editing_aproveitamento = idioma
+                                        st.rerun()
+    
+    elif st.session_state.current_page == 'dashboard':
+        st.title("Dashboard")
+        
+        # Selecionar aluno
+        conn = sqlite3.connect('ppgop.db')
+        alunos_df = pd.read_sql_query("SELECT id, nome FROM alunos ORDER BY nome", conn)
+        conn.close()
+        
+        if alunos_df.empty:
+            st.warning("Nenhum aluno cadastrado. Cadastre um aluno primeiro.")
+        else:
+            aluno_options = alunos_df['nome'].tolist()
+            aluno_ids = alunos_df['id'].tolist()
+            
+            selected_aluno_name = st.selectbox("Selecione um aluno", aluno_options)
+            selected_aluno_index = aluno_options.index(selected_aluno_name)
+            selected_aluno_id = aluno_ids[selected_aluno_index]
+            
+            # Obter dados do aluno
+            aluno = get_aluno(selected_aluno_id)
+            
+            if aluno:
+                # Obter resumo de aproveitamentos
+                resumo = get_resumo_aproveitamentos(selected_aluno_id)
+                
+                # Botão para exportar PDF
+                if st.button("📄 Exportar PDF"):
+                    try:
+                        pdf_bytes = gerar_pdf_dashboard(aluno, resumo)
+                        st.markdown(get_download_link(pdf_bytes, f"dashboard_{aluno['nome']}.pdf"), unsafe_allow_html=True)
+                    except Exception as e:
+                        st.error(f"Erro ao gerar PDF: {str(e)}")
+                
+                # Exibir dados do aluno
+                st.subheader("Dados do Aluno")
+                col1, col2 = st.columns(2)
+                
+                # Formatar datas
+                data_ingresso = datetime.datetime.strptime(aluno['data_ingresso'], '%Y-%m-%d').strftime('%d/%m/%Y') if aluno['data_ingresso'] else 'Não informada'
+                prazo_projeto = datetime.datetime.strptime(aluno['prazo_defesa_projeto'], '%Y-%m-%d').strftime('%d/%m/%Y') if aluno['prazo_defesa_projeto'] else 'Não informado'
+                prazo_tese = datetime.datetime.strptime(aluno['prazo_defesa_tese'], '%Y-%m-%d').strftime('%d/%m/%Y') if aluno['prazo_defesa_tese'] else 'Não informado'
+                
+                with col1:
+                    st.write(f"**Nome:** {aluno['nome']}")
+                    st.write(f"**Matrícula:** {aluno['matricula'] or 'Não informada'}")
+                    st.write(f"**Email:** {aluno['email']}")
+                    st.write(f"**Orientador:** {aluno['orientador'] or 'Não informado'}")
+                    st.write(f"**Linha de Pesquisa:** {aluno['linha_pesquisa'] or 'Não informada'}")
+                
+                with col2:
+                    st.write(f"**Data de Ingresso:** {data_ingresso}")
+                    st.write(f"**Turma:** {aluno['turma'] or 'Não informada'}")
+                    st.write(f"**Nível:** {aluno['nivel'] or 'Não informado'}")
+                    st.write(f"**Prazo Defesa Projeto:** {prazo_projeto}")
+                    st.write(f"**Prazo Defesa Tese:** {prazo_tese}")
+                
+                # Exibir resumo de aproveitamentos
+                st.subheader("Resumo de Aproveitamentos")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write("### Disciplinas")
+                    st.write(f"**Total de disciplinas:** {resumo['disciplinas']['total']}")
+                    st.write(f"**Créditos aproveitados:** {resumo['disciplinas']['creditos']}")
+                    st.write(f"**Horas aproveitadas:** {resumo['disciplinas']['horas']}")
+                    st.write(f"**Disciplinas deferidas:** {resumo['disciplinas']['deferidos']}")
+                    st.write(f"**Disciplinas pendentes:** {resumo['disciplinas']['pendentes']}")
+                
+                with col2:
+                    st.write("### Idiomas")
+                    st.write(f"**Total de idiomas:** {resumo['idiomas']['total']}")
+                    st.write(f"**Idiomas aprovados:** {resumo['idiomas']['aprovados']}")
+                    st.write(f"**Idiomas pendentes:** {resumo['idiomas']['pendentes']}")
+                
+                # Gráficos
+                if resumo['disciplinas']['total'] > 0 or resumo['idiomas']['total'] > 0:
+                    st.subheader("Gráficos")
+                    col1, col2 = st.columns(2)
+                    
+                    # Gráfico de disciplinas
+                    if resumo['disciplinas']['total'] > 0:
+                        with col1:
+                            fig, ax = plt.subplots()
+                            labels = ['Deferidas', 'Pendentes']
+                            sizes = [resumo['disciplinas']['deferidos'], resumo['disciplinas']['pendentes']]
+                            colors = ['#0A4C92', '#EBF5FF']
+                            ax.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
+                            ax.axis('equal')
+                            plt.title('Status das Disciplinas')
+                            st.pyplot(fig)
+                    
+                    # Gráfico de idiomas
+                    if resumo['idiomas']['total'] > 0:
+                        with col2:
+                            fig, ax = plt.subplots()
+                            labels = ['Aprovados', 'Pendentes']
+                            sizes = [resumo['idiomas']['aprovados'], resumo['idiomas']['pendentes']]
+                            colors = ['#0A4C92', '#EBF5FF']
+                            ax.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
+                            ax.axis('equal')
+                            plt.title('Status dos Idiomas')
+                            st.pyplot(fig)
+                
+                # Detalhes dos aproveitamentos
+                st.subheader("Detalhes dos Aproveitamentos")
+                
+                # Mapeamento de status
+                status_map = {
+                    'solicitado': 'Solicitado',
+                    'aprovado_coordenacao': 'Aprovado (Coord.)',
+                    'aprovado_colegiado': 'Aprovado (Coleg.)',
+                    'deferido': 'Deferido',
+                    'indeferido': 'Indeferido'
+                }
+                
+                # Disciplinas
+                if resumo['detalhes']['disciplinas']:
+                    st.write("### Disciplinas")
+                    
+                    # Criar DataFrame para exibição
+                    disc_df = pd.DataFrame(resumo['detalhes']['disciplinas'])
+                    disc_df['status'] = disc_df['status'].map(lambda x: status_map.get(x, x))
+                    disc_df['horas'] = disc_df['creditos'] * 15
                     
                     # Renomear colunas
-                    cols_display = {
+                    disc_df = disc_df.rename(columns={
                         'nome': 'Disciplina',
                         'codigo': 'Código',
                         'creditos': 'Créditos',
@@ -1347,73 +1245,59 @@ else:
                         'instituicao': 'Instituição',
                         'status': 'Status',
                         'processo': 'Processo'
-                    }
+                    })
                     
-                    df_display = df_disciplinas.rename(columns=cols_display)
-                    
-                    # Exibir tabela
-                    st.dataframe(df_display, hide_index=True)
+                    # Selecionar colunas para exibição
+                    display_cols = ['Disciplina', 'Código', 'Créditos', 'Horas', 'Instituição', 'Status', 'Processo']
+                    st.dataframe(disc_df[display_cols])
                 else:
                     st.info("Nenhuma disciplina cadastrada para este aluno.")
                 
                 # Idiomas
                 if resumo['detalhes']['idiomas']:
-                    st.markdown("#### Idiomas")
+                    st.write("### Idiomas")
                     
-                    # Converter para DataFrame
-                    df_idiomas = pd.DataFrame(resumo['detalhes']['idiomas'])
-                    
-                    # Formatar status
-                    df_idiomas['status'] = df_idiomas['status'].map(status_map)
+                    # Criar DataFrame para exibição
+                    idioma_df = pd.DataFrame(resumo['detalhes']['idiomas'])
+                    idioma_df['status'] = idioma_df['status'].map(lambda x: status_map.get(x, x))
                     
                     # Renomear colunas
-                    cols_display = {
+                    idioma_df = idioma_df.rename(columns={
                         'idioma': 'Idioma',
                         'nota': 'Nota',
                         'instituicao': 'Instituição',
                         'status': 'Status',
                         'processo': 'Processo'
-                    }
+                    })
                     
-                    df_display = df_idiomas.rename(columns=cols_display)
-                    
-                    # Exibir tabela
-                    st.dataframe(df_display, hide_index=True)
+                    # Selecionar colunas para exibição
+                    display_cols = ['Idioma', 'Nota', 'Instituição', 'Status', 'Processo']
+                    st.dataframe(idioma_df[display_cols])
                 else:
                     st.info("Nenhum idioma cadastrado para este aluno.")
     
-    # Página de Importação de Alunos
     elif st.session_state.current_page == 'importar':
-        st.markdown('<div style="font-size: 2rem; font-weight: bold; margin-bottom: 1rem; color: #0A4C92;">Importação de Alunos</div>', unsafe_allow_html=True)
+        st.title("Importação de Alunos")
         
-        st.markdown("""
-        Esta funcionalidade permite importar alunos a partir de um arquivo Excel.
+        st.write("Esta funcionalidade permite importar alunos a partir de um arquivo Excel.")
         
-        **Instruções:**
-        1. O arquivo Excel deve conter uma linha de cabeçalho com os campos: Matrícula, Nome, E-mail, Orientador(a), Linha de Pesquisa, Ingresso, Turma, Prazo defesa do Projeto, Prazo para Defesa da Tese
-        2. Os alunos com e-mails já cadastrados serão ignorados para evitar duplicações
-        3. Após o upload, será exibido um relatório com o resultado da importação
-        """)
+        st.write("### Instruções:")
+        st.write("- O arquivo Excel deve conter uma linha de cabeçalho com os campos: Matrícula, Nível, Nome, E-mail, Orientador(a), Linha de Pesquisa, Ingresso, Turma, Prazo defesa do Projeto, Prazo para Defesa da Tese")
+        st.write("- Os alunos com e-mails já cadastrados serão ignorados para evitar duplicações")
+        st.write("- Após o upload, será exibido um relatório com o resultado da importação")
         
-        uploaded_file = st.file_uploader("Selecione o arquivo Excel", type=["xlsx", "xls"])
+        uploaded_file = st.file_uploader("Selecione o arquivo Excel", type=['xlsx', 'xls'])
         
         if uploaded_file is not None:
             if st.button("Importar Alunos"):
-                with st.spinner("Importando alunos..."):
-                    # Salvar o arquivo temporariamente
-                    stats = import_alunos_from_excel(uploaded_file)
+                stats = import_alunos_from_excel(uploaded_file)
+                
+                if "error" in stats:
+                    st.error(stats["error"])
+                else:
+                    st.success(f"Importação concluída! {stats['importados']} alunos importados, {stats['ignorados']} ignorados.")
                     
-                    if "error" in stats:
-                        st.error(stats["error"])
-                    else:
-                        st.success(f"Importação concluída! {stats['importados']} alunos importados, {stats['ignorados']} ignorados.")
-                        
-                        if stats["erros"]:
-                            with st.expander("Detalhes dos erros"):
-                                for erro in stats["erros"]:
-                                    st.warning(erro)
-                        
-                        # Exibir botão para voltar à lista de alunos
-                        if st.button("Ver Lista de Alunos"):
-                            set_page('alunos')
-                            st.rerun()
+                    if stats["erros"]:
+                        st.write("### Detalhes dos erros")
+                        for erro in stats["erros"]:
+                            st.write(erro)
