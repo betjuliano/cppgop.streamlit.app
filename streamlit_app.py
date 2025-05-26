@@ -65,14 +65,24 @@ def init_db():
     )
     ''')
     
-    # Verificar se a coluna nivel já existe
+    # Verificar e adicionar colunas que possam estar faltando na tabela alunos
     c.execute("PRAGMA table_info(alunos)")
-    colunas = [info[1] for info in c.fetchall()]
-    if 'nivel' not in colunas:
-        try:
-            c.execute("ALTER TABLE alunos ADD COLUMN nivel TEXT")
-        except:
-            pass  # Coluna já existe ou erro ao adicionar
+    colunas_existentes = [info[1] for info in c.fetchall()]
+    
+    # Lista de colunas que devem existir na tabela alunos
+    colunas_necessarias = {
+        'turma': 'TEXT',
+        'nivel': 'TEXT'
+    }
+    
+    # Adicionar colunas faltantes
+    for coluna, tipo in colunas_necessarias.items():
+        if coluna not in colunas_existentes:
+            try:
+                c.execute(f"ALTER TABLE alunos ADD COLUMN {coluna} {tipo}")
+                print(f"Coluna {coluna} adicionada à tabela alunos")
+            except Exception as e:
+                print(f"Erro ao adicionar coluna {coluna}: {str(e)}")
     
     # Tabela de aproveitamentos
     c.execute('''
