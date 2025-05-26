@@ -372,7 +372,7 @@ def delete_aproveitamento(aproveitamento_id):
 # Função para exibir o cabeçalho
 def display_header():
     header_image = Image.open('assets/header.jpg')
-    st.image(header_image, use_column_width=True)
+    st.image(header_image, use_container_width=True)
 
 # Inicializar banco de dados
 init_db()
