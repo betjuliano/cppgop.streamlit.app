@@ -47,9 +47,9 @@ def check_and_add_column(cursor, table_name, column_name, column_type):
     if column_name not in columns:
         try:
             cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
-            print(f"Coluna 	'{column_name}	' adicionada à tabela 	'{table_name}	'.")
+            print(f"Coluna 	'{column_name}'	 adicionada à tabela 	'{table_name}'.")
         except sqlite3.Error as e:
-            print(f"Erro ao adicionar coluna 	'{column_name}	' à tabela 	'{table_name}	': {e}")
+            print(f"Erro ao adicionar coluna 	'{column_name}'	 à tabela 	'{table_name}': {e}")
             # Não relançar o erro aqui, pode ser que a coluna já exista de alguma forma
             # mas não foi detectada pelo PRAGMA (improvável, mas seguro)
 
@@ -63,7 +63,7 @@ def init_db(force_recreate=False):
     if force_recreate and os.path.exists(DB_FILE):
         try:
             os.remove(DB_FILE)
-            print(f"Banco de dados antigo 	'{DB_FILE}	' removido (force_recreate=True).")
+            print(f"Banco de dados antigo 	'{DB_FILE}'	 removido (force_recreate=True).")
         except OSError as e:
             print(f"Erro ao remover o banco de dados antigo: {e}")
             st.error(f"Erro ao tentar remover o banco de dados antigo. Verifique as permissões. Detalhes: {e}")
@@ -250,9 +250,9 @@ def save_aluno(aluno_data, aluno_id=None):
         conn.rollback() # Desfaz a transação em caso de erro
         print(f"Erro de integridade ao salvar aluno: {e}")
         if "UNIQUE constraint failed: alunos.email" in str(e):
-            st.error(f"Erro: Já existe um aluno cadastrado com o e-mail 	'{aluno_data.get('email')}	'.")
+            st.error(f"Erro: Já existe um aluno cadastrado com o e-mail '{aluno_data.get('email')}'.")
         elif "UNIQUE constraint failed: alunos.matricula" in str(e):
-            st.error(f"Erro: Já existe um aluno cadastrado com a matrícula 	'{aluno_data.get('matricula')}	'.")
+            st.error(f"Erro: Já existe um aluno cadastrado com a matrícula '{aluno_data.get('matricula')}'.")
         else:
             st.error(f"Erro ao salvar aluno: {e}")
         return None
@@ -446,7 +446,7 @@ def import_alunos_from_excel(uploaded_file):
     }
 
     # Verificar se as colunas essenciais existem (após normalização)
-    required_cols_normalized = ["nome", "e-mail", "ingresso", "nivel"] # Nível agora é essencial?
+    required_cols_normalized = ["nome", "e-mail", "ingresso", "nivel"] # Nível agora é essencial
     missing_cols = [col for col in required_cols_normalized if col not in df.columns]
     if missing_cols:
         st.error(f"Erro: Colunas obrigatórias não encontradas no Excel (após normalização): {', '.join(missing_cols)}. Colunas encontradas: {', '.join(df.columns)}")
@@ -845,16 +845,17 @@ def cadastro_alunos_page():
         col1, col2 = st.columns(2)
 
         with col1:
-            nome = st.text_input("Nome Completo*", value=aluno_data.get("nome", ""))
             matricula = st.text_input("Matrícula", value=aluno_data.get("matricula", ""))
-            email = st.text_input("E-mail*", value=aluno_data.get("email", ""))
+            # --- NÍVEL COMO SEGUNDO CAMPO --- 
             nivel_options = ["Mestrado", "Doutorado"]
-            # Garantir que o índice seja válido mesmo se default_nivel for None ou inválido
             try:
                 nivel_index = nivel_options.index(default_nivel) if default_nivel in nivel_options else 0
             except ValueError:
                 nivel_index = 0 # Padrão se valor não estiver na lista
             nivel = st.selectbox("Nível*", nivel_options, index=nivel_index)
+            # --- FIM NÍVEL ---
+            nome = st.text_input("Nome Completo*", value=aluno_data.get("nome", ""))
+            email = st.text_input("E-mail*", value=aluno_data.get("email", ""))
             orientador = st.text_input("Orientador(a)", value=aluno_data.get("orientador", ""))
 
         with col2:
@@ -873,10 +874,10 @@ def cadastro_alunos_page():
             else:
                 # Preparar dados para salvar (converter datas de volta para string YYYY-MM-DD)
                 data_to_save = {
-                    "nome": nome,
                     "matricula": matricula if matricula else None,
+                    "nivel": nivel, # Nível já está aqui
+                    "nome": nome,
                     "email": email,
-                    "nivel": nivel,
                     "orientador": orientador if orientador else None,
                     "linha_pesquisa": linha_pesquisa if linha_pesquisa else None,
                     "turma": turma if turma else None,
@@ -1044,7 +1045,7 @@ def import_page():
     **Instruções:**
     - O arquivo Excel deve conter uma linha de cabeçalho.
     - As colunas esperadas (nomes podem variar ligeiramente, o sistema tentará normalizar):
-      `Matrícula`, `Nível` (contendo 'Mestrado' ou 'Doutorado'), `Nome`, `E-mail`, `Orientador(a)`, `Linha de Pesquisa`, `Ingresso`, `Turma`, `Prazo defesa do Projeto`, `Prazo para Defesa da tese`
+      `Matrícula`, **`Nível` (obrigatório, como 2ª coluna, contendo 'Mestrado' ou 'Doutorado')**, `Nome` (obrigatório), `E-mail` (obrigatório), `Orientador(a)`, `Linha de Pesquisa`, `Ingresso` (obrigatório), `Turma`, `Prazo defesa do Projeto`, `Prazo para Defesa da tese`
     - Colunas essenciais: `Nome`, `E-mail`, `Ingresso`, `Nível`.
     - Alunos com e-mails ou matrículas já cadastrados serão ignorados.
     - Após o upload, será exibido um relatório com o resultado da importação.
@@ -1146,9 +1147,9 @@ def dashboard_page():
 
     with col1:
         st.subheader("Dados Cadastrais")
-        st.markdown(f"**Nome:** {aluno.get('nome', 'N/A')}")
         st.markdown(f"**Matrícula:** {aluno.get('matricula', 'N/A')}")
         st.markdown(f"**Nível:** {aluno.get('nivel', 'N/A')}") # Exibe Nível
+        st.markdown(f"**Nome:** {aluno.get('nome', 'N/A')}")
         st.markdown(f"**E-mail:** {aluno.get('email', 'N/A')}")
         st.markdown(f"**Orientador(a):** {aluno.get('orientador', 'N/A')}")
         st.markdown(f"**Linha de Pesquisa:** {aluno.get('linha_pesquisa', 'N/A')}")
