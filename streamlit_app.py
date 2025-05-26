@@ -57,7 +57,7 @@ def init_db():
         orientador TEXT,
         linha_pesquisa TEXT,
         data_ingresso DATE NOT NULL,
-        ano_ingresso INTEGER,
+        turma TEXT,
         prazo_defesa_projeto DATE,
         prazo_defesa_tese DATE,
         data_cadastro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -165,7 +165,7 @@ def save_aluno(aluno_data, aluno_id=None):
             orientador = ?,
             linha_pesquisa = ?,
             data_ingresso = ?,
-            ano_ingresso = ?,
+            turma = ?,
             prazo_defesa_projeto = ?,
             prazo_defesa_tese = ?,
             data_atualizacao = CURRENT_TIMESTAMP
@@ -177,7 +177,7 @@ def save_aluno(aluno_data, aluno_id=None):
             aluno_data['orientador'],
             aluno_data['linha_pesquisa'],
             aluno_data['data_ingresso'],
-            aluno_data['ano_ingresso'],
+            aluno_data['turma'],
             aluno_data['prazo_defesa_projeto'],
             aluno_data['prazo_defesa_tese'],
             aluno_id
@@ -186,7 +186,7 @@ def save_aluno(aluno_data, aluno_id=None):
         c.execute("""
         INSERT INTO alunos (
             matricula, nome, email, orientador, linha_pesquisa, 
-            data_ingresso, ano_ingresso, prazo_defesa_projeto, prazo_defesa_tese
+            data_ingresso, turma, prazo_defesa_projeto, prazo_defesa_tese
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             aluno_data['matricula'],
@@ -195,7 +195,7 @@ def save_aluno(aluno_data, aluno_id=None):
             aluno_data['orientador'],
             aluno_data['linha_pesquisa'],
             aluno_data['data_ingresso'],
-            aluno_data['ano_ingresso'],
+            aluno_data['turma'],
             aluno_data['prazo_defesa_projeto'],
             aluno_data['prazo_defesa_tese']
         ))
@@ -526,17 +526,12 @@ def import_alunos_from_excel(uploaded_file):
                 data_ingresso = datetime.datetime.now().strftime('%Y-%m-%d')
                 stats["erros"].append(f"Data de ingresso inválida para {row['Nome']}, usando data atual")
             
-            # Extrair ano de ingresso
+            # Extrair turma
             try:
-                if pd.notna(row["Ano de Ingresso"]):
-                    ano_ingresso = int(row["Ano de Ingresso"])
-                elif pd.notna(row["Ingresso"]):
-                    ano_ingresso = pd.to_datetime(row["Ingresso"]).year
-                else:
-                    ano_ingresso = datetime.datetime.now().year
+                turma = str(row["Turma"]) if pd.notna(row["Turma"]) else ""
             except:
-                ano_ingresso = datetime.datetime.now().year
-                stats["erros"].append(f"Ano de ingresso inválido para {row['Nome']}, usando ano atual")
+                turma = ""
+                stats["erros"].append(f"Turma inválida para {row['Nome']}")
                 
             try:
                 prazo_defesa_projeto = pd.to_datetime(row["Prazo defesa do Projeto"]).strftime('%Y-%m-%d') if pd.notna(row["Prazo defesa do Projeto"]) else None
@@ -554,7 +549,7 @@ def import_alunos_from_excel(uploaded_file):
             cursor.execute("""
             INSERT INTO alunos (
                 matricula, nome, email, orientador, linha_pesquisa, 
-                data_ingresso, ano_ingresso, prazo_defesa_projeto, prazo_defesa_tese
+                data_ingresso, turma, prazo_defesa_projeto, prazo_defesa_tese
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 row["Matrícula"] if pd.notna(row["Matrícula"]) else None,
@@ -563,7 +558,7 @@ def import_alunos_from_excel(uploaded_file):
                 row["Orientador(a)"] if pd.notna(row["Orientador(a)"]) else None,
                 row["Linha de Pesquisa"] if pd.notna(row["Linha de Pesquisa"]) else None,
                 data_ingresso,
-                ano_ingresso,
+                turma,
                 prazo_defesa_projeto,
                 prazo_defesa_tese
             ))
@@ -682,8 +677,7 @@ else:
                 with col2:
                     data_ingresso = st.date_input("Data de Ingresso", 
                                                 value=datetime.datetime.strptime(st.session_state.editing_aluno.get('data_ingresso', datetime.datetime.now().strftime('%Y-%m-%d')), '%Y-%m-%d').date() if st.session_state.editing_aluno.get('data_ingresso') else datetime.datetime.now())
-                    ano_ingresso = st.number_input("Ano de Ingresso", min_value=2000, max_value=2100, 
-                                                value=int(st.session_state.editing_aluno.get('ano_ingresso', datetime.datetime.now().year)) if st.session_state.editing_aluno.get('ano_ingresso') else datetime.datetime.now().year)
+                    turma = st.text_input("Turma", value=st.session_state.editing_aluno.get('turma', ''))
                     prazo_defesa_projeto = st.date_input("Prazo Defesa Projeto", 
                                                       value=datetime.datetime.strptime(st.session_state.editing_aluno.get('prazo_defesa_projeto', ''), '%Y-%m-%d').date() if st.session_state.editing_aluno.get('prazo_defesa_projeto') else None)
                     prazo_defesa_tese = st.date_input("Prazo Defesa Tese", 
@@ -708,7 +702,7 @@ else:
                             'orientador': orientador,
                             'linha_pesquisa': linha_pesquisa,
                             'data_ingresso': data_ingresso.strftime('%Y-%m-%d'),
-                            'ano_ingresso': ano_ingresso,
+                            'turma': turma,
                             'prazo_defesa_projeto': prazo_defesa_projeto.strftime('%Y-%m-%d') if prazo_defesa_projeto else None,
                             'prazo_defesa_tese': prazo_defesa_tese.strftime('%Y-%m-%d') if prazo_defesa_tese else None
                         }
@@ -738,6 +732,7 @@ else:
                 'orientador': 'Orientador(a)',
                 'linha_pesquisa': 'Linha de Pesquisa',
                 'data_ingresso': 'Ingresso',
+                'turma': 'Turma',
                 'prazo_defesa_projeto': 'Prazo Projeto',
                 'prazo_defesa_tese': 'Prazo Defesa'
             }
