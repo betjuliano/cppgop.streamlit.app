@@ -8,6 +8,7 @@ from enum import Enum
 import random
 import string
 from PIL import Image
+import io
 
 # Configuração da página
 st.set_page_config(
@@ -369,6 +370,109 @@ def delete_aproveitamento(aproveitamento_id):
     conn.close()
     return True
 
+# Função para importar alunos do Excel
+def import_alunos_from_excel(uploaded_file):
+    """
+    Importa alunos do arquivo Excel para o banco de dados.
+    
+    Args:
+        uploaded_file: Arquivo Excel carregado via Streamlit
+        
+    Returns:
+        dict: Estatísticas da importação (total, importados, ignorados)
+    """
+    # Ler o arquivo Excel
+    df = pd.read_excel(uploaded_file, header=None)
+    
+    # Encontrar a linha do cabeçalho (que contém "Matrícula", "Nome", etc.)
+    header_row = None
+    for i, row in df.iterrows():
+        if isinstance(row[0], str) and row[0].strip() == "Matrícula":
+            header_row = i
+            break
+    
+    if header_row is None:
+        return {"error": "Formato de arquivo inválido. Cabeçalho não encontrado."}
+    
+    # Extrair os dados a partir da linha após o cabeçalho
+    data_df = df.iloc[header_row+1:].copy()
+    data_df.columns = df.iloc[header_row]
+    
+    # Remover linhas sem nome (provavelmente vazias)
+    data_df = data_df[data_df["Nome"].notna()]
+    
+    # Conectar ao banco de dados
+    conn = sqlite3.connect('ppgop.db')
+    cursor = conn.cursor()
+    
+    # Estatísticas
+    stats = {
+        "total": len(data_df),
+        "importados": 0,
+        "ignorados": 0,
+        "erros": []
+    }
+    
+    # Inserir cada aluno no banco de dados
+    for _, row in data_df.iterrows():
+        try:
+            # Verificar se o aluno já existe (pelo email)
+            cursor.execute("SELECT id FROM alunos WHERE email = ?", (row["E-mail"],))
+            existing = cursor.fetchone()
+            
+            if existing:
+                stats["ignorados"] += 1
+                stats["erros"].append(f"Aluno já existe: {row['Nome']} ({row['E-mail']})")
+                continue
+            
+            # Formatar datas
+            try:
+                data_ingresso = pd.to_datetime(row["Ingresso"]).strftime('%Y-%m-%d') if pd.notna(row["Ingresso"]) else datetime.datetime.now().strftime('%Y-%m-%d')
+            except:
+                data_ingresso = datetime.datetime.now().strftime('%Y-%m-%d')
+                stats["erros"].append(f"Data de ingresso inválida para {row['Nome']}, usando data atual")
+                
+            try:
+                prazo_defesa_projeto = pd.to_datetime(row["Prazo defesa do Projeto"]).strftime('%Y-%m-%d') if pd.notna(row["Prazo defesa do Projeto"]) else None
+            except:
+                prazo_defesa_projeto = None
+                stats["erros"].append(f"Prazo de defesa de projeto inválido para {row['Nome']}")
+                
+            try:
+                prazo_defesa_tese = pd.to_datetime(row["Prazo para Defesa da Tese"]).strftime('%Y-%m-%d') if pd.notna(row["Prazo para Defesa da Tese"]) else None
+            except:
+                prazo_defesa_tese = None
+                stats["erros"].append(f"Prazo de defesa de tese inválido para {row['Nome']}")
+            
+            # Inserir aluno
+            cursor.execute("""
+            INSERT INTO alunos (
+                matricula, nome, email, orientador, linha_pesquisa, 
+                data_ingresso, prazo_defesa_projeto, prazo_defesa_tese
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                row["Matrícula"] if pd.notna(row["Matrícula"]) else None,
+                row["Nome"],
+                row["E-mail"],
+                row["Orientador(a)"] if pd.notna(row["Orientador(a)"]) else None,
+                row["Linha de Pesquisa"] if pd.notna(row["Linha de Pesquisa"]) else None,
+                data_ingresso,
+                prazo_defesa_projeto,
+                prazo_defesa_tese
+            ))
+            
+            stats["importados"] += 1
+            
+        except Exception as e:
+            stats["ignorados"] += 1
+            stats["erros"].append(f"Erro ao importar {row['Nome']}: {str(e)}")
+    
+    # Commit e fechar conexão
+    conn.commit()
+    conn.close()
+    
+    return stats
+
 # Função para exibir o cabeçalho
 def display_header():
     header_image = Image.open('assets/header.jpg')
@@ -428,6 +532,10 @@ else:
         
         if st.button("Aproveitamentos", key="nav_aproveitamentos"):
             set_page('aproveitamentos')
+            st.rerun()
+        
+        if st.button("Importar Alunos", key="nav_importar"):
+            set_page('importar')
             st.rerun()
         
         st.markdown("---")
@@ -771,10 +879,46 @@ else:
                                 st.rerun()
         else:
             st.info("Nenhum aproveitamento cadastrado.")
+    
+    # Página de Importação de Alunos
+    elif st.session_state.current_page == 'importar':
+        st.markdown('<div style="font-size: 2rem; font-weight: bold; margin-bottom: 1rem; color: #0A4C92;">Importação de Alunos</div>', unsafe_allow_html=True)
+        
+        st.markdown("""
+        Esta funcionalidade permite importar alunos a partir de um arquivo Excel.
+        
+        **Instruções:**
+        1. O arquivo Excel deve conter uma linha de cabeçalho com os campos: Matrícula, Nome, E-mail, Orientador(a), Linha de Pesquisa, Ingresso, Prazo defesa do Projeto, Prazo para Defesa da Tese
+        2. Os alunos com e-mails já cadastrados serão ignorados para evitar duplicações
+        3. Após o upload, será exibido um relatório com o resultado da importação
+        """)
+        
+        uploaded_file = st.file_uploader("Selecione o arquivo Excel", type=["xlsx", "xls"])
+        
+        if uploaded_file is not None:
+            if st.button("Importar Alunos"):
+                with st.spinner("Importando alunos..."):
+                    # Salvar o arquivo temporariamente
+                    stats = import_alunos_from_excel(uploaded_file)
+                    
+                    if "error" in stats:
+                        st.error(stats["error"])
+                    else:
+                        st.success(f"Importação concluída! {stats['importados']} alunos importados, {stats['ignorados']} ignorados.")
+                        
+                        if stats["erros"]:
+                            with st.expander("Detalhes dos erros"):
+                                for erro in stats["erros"]:
+                                    st.warning(erro)
+                        
+                        # Exibir botão para voltar à lista de alunos
+                        if st.button("Ver Lista de Alunos"):
+                            set_page('alunos')
+                            st.rerun()
 
 # Adicionar rodapé com informações sobre o domínio personalizado
 st.markdown("""
 <div style="position: fixed; bottom: 0; left: 0; width: 100%; background-color: #0A4C92; color: white; text-align: center; padding: 10px; font-size: 0.8rem;">
-    Sistema de Gestão de Alunos PPGOP - Disponível em: ppgop.streamlit.app
+    Sistema de Gestão de Alunos PPGOP - Disponível em: cppgop.streamlit.app
 </div>
 """, unsafe_allow_html=True)
