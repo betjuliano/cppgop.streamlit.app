@@ -3,8 +3,7 @@ import base64
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from weasyprint import HTML, CSS
-from jinja2 import Template
+import fpdf
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -58,12 +57,22 @@ def init_db():
         linha_pesquisa TEXT,
         data_ingresso DATE NOT NULL,
         turma TEXT,
+        nivel TEXT,
         prazo_defesa_projeto DATE,
         prazo_defesa_tese DATE,
         data_cadastro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         data_atualizacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     ''')
+    
+    # Verificar se a coluna nivel já existe
+    c.execute("PRAGMA table_info(alunos)")
+    colunas = [info[1] for info in c.fetchall()]
+    if 'nivel' not in colunas:
+        try:
+            c.execute("ALTER TABLE alunos ADD COLUMN nivel TEXT")
+        except:
+            pass  # Coluna já existe ou erro ao adicionar
     
     # Tabela de aproveitamentos
     c.execute('''
@@ -151,6 +160,7 @@ def save_aluno(aluno_data, aluno_id=None):
             linha_pesquisa = ?,
             data_ingresso = ?,
             turma = ?,
+            nivel = ?,
             prazo_defesa_projeto = ?,
             prazo_defesa_tese = ?,
             data_atualizacao = CURRENT_TIMESTAMP
@@ -163,6 +173,7 @@ def save_aluno(aluno_data, aluno_id=None):
             aluno_data['linha_pesquisa'],
             aluno_data['data_ingresso'],
             aluno_data['turma'],
+            aluno_data['nivel'],
             aluno_data['prazo_defesa_projeto'],
             aluno_data['prazo_defesa_tese'],
             aluno_id
@@ -171,8 +182,8 @@ def save_aluno(aluno_data, aluno_id=None):
         c.execute("""
         INSERT INTO alunos (
             matricula, nome, email, orientador, linha_pesquisa, 
-            data_ingresso, turma, prazo_defesa_projeto, prazo_defesa_tese
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            data_ingresso, turma, nivel, prazo_defesa_projeto, prazo_defesa_tese
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             aluno_data['matricula'],
             aluno_data['nome'],
@@ -181,6 +192,7 @@ def save_aluno(aluno_data, aluno_id=None):
             aluno_data['linha_pesquisa'],
             aluno_data['data_ingresso'],
             aluno_data['turma'],
+            aluno_data['nivel'],
             aluno_data['prazo_defesa_projeto'],
             aluno_data['prazo_defesa_tese']
         ))
@@ -191,6 +203,15 @@ def save_aluno(aluno_data, aluno_id=None):
 def delete_aluno(aluno_id):
     conn = sqlite3.connect('ppgop.db')
     c = conn.cursor()
+    
+    # Excluir o aluno
+    c.execute("DELETE FROM alunos WHERE id = ?", (aluno_id,))
+    
+    # Commit e fechar conexão
+    conn.commit()
+    conn.close()
+    
+    return True
     
     c.execute("DELETE FROM alunos WHERE id = ?", (aluno_id,))
     
@@ -459,6 +480,13 @@ def import_alunos_from_excel(uploaded_file):
             except:
                 turma = ""
                 stats["erros"].append(f"Turma inválida para {row['Nome']}")
+            
+            # Extrair nível
+            try:
+                nivel = str(row["Nível"]) if pd.notna(row["Nível"]) else ""
+            except:
+                nivel = ""
+                stats["erros"].append(f"Nível inválido para {row['Nome']}")
                 
             try:
                 prazo_defesa_projeto = pd.to_datetime(row["Prazo defesa do Projeto"]).strftime('%Y-%m-%d') if pd.notna(row["Prazo defesa do Projeto"]) else None
@@ -476,8 +504,8 @@ def import_alunos_from_excel(uploaded_file):
             cursor.execute("""
             INSERT INTO alunos (
                 matricula, nome, email, orientador, linha_pesquisa, 
-                data_ingresso, turma, prazo_defesa_projeto, prazo_defesa_tese
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                data_ingresso, turma, nivel, prazo_defesa_projeto, prazo_defesa_tese
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 row["Matrícula"] if pd.notna(row["Matrícula"]) else None,
                 row["Nome"],
@@ -486,6 +514,7 @@ def import_alunos_from_excel(uploaded_file):
                 row["Linha de Pesquisa"] if pd.notna(row["Linha de Pesquisa"]) else None,
                 data_ingresso,
                 turma,
+                nivel,
                 prazo_defesa_projeto,
                 prazo_defesa_tese
             ))
@@ -509,301 +538,216 @@ def display_header():
 
 # Função para gerar PDF do dashboard do aluno
 def gerar_pdf_dashboard(aluno, resumo):
-    # Criar gráficos para o PDF
-    disciplinas_fig = None
-    idiomas_fig = None
+    # Criar PDF usando FPDF2
+    pdf = fpdf.FPDF(orientation='P', unit='mm', format='A4')
+    pdf.add_page()
     
-    # Gráfico de disciplinas
-    if resumo['disciplinas']['total'] > 0:
-        disciplinas_fig = plt.figure(figsize=(6, 4))
-        labels = ['Deferidas', 'Pendentes']
-        sizes = [resumo['disciplinas']['deferidos'], resumo['disciplinas']['pendentes']]
-        colors = ['#0A4C92', '#EBF5FF']
-        plt.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
-        plt.axis('equal')
-        plt.title('Status das Disciplinas')
-        
-        # Salvar gráfico em base64
-        buf = io.BytesIO()
-        disciplinas_fig.savefig(buf, format='png')
-        buf.seek(0)
-        disciplinas_img = base64.b64encode(buf.read()).decode('utf-8')
-        plt.close(disciplinas_fig)
-    else:
-        disciplinas_img = None
+    # Configurar fontes
+    pdf.add_font('DejaVu', '', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', uni=True)
+    pdf.set_font('DejaVu', '', 12)
     
-    # Gráfico de idiomas
-    if resumo['idiomas']['total'] > 0:
-        idiomas_fig = plt.figure(figsize=(6, 4))
-        labels = ['Aprovados', 'Pendentes']
-        sizes = [resumo['idiomas']['aprovados'], resumo['idiomas']['pendentes']]
-        colors = ['#0A4C92', '#EBF5FF']
-        plt.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
-        plt.axis('equal')
-        plt.title('Status dos Idiomas')
-        
-        # Salvar gráfico em base64
-        buf = io.BytesIO()
-        idiomas_fig.savefig(buf, format='png')
-        buf.seek(0)
-        idiomas_img = base64.b64encode(buf.read()).decode('utf-8')
-        plt.close(idiomas_fig)
-    else:
-        idiomas_img = None
+    # Cabeçalho
+    pdf.set_font('DejaVu', '', 16)
+    pdf.cell(0, 10, 'Dashboard do Aluno', 0, 1, 'C')
+    pdf.set_font('DejaVu', '', 12)
+    pdf.cell(0, 6, 'Programa de Pós-Graduação em Gestão de Organizações Públicas', 0, 1, 'C')
+    pdf.cell(0, 6, f'Relatório gerado em {datetime.datetime.now().strftime("%d/%m/%Y %H:%M")}', 0, 1, 'C')
+    pdf.ln(5)
+    
+    # Dados do aluno
+    pdf.set_font('DejaVu', '', 14)
+    pdf.set_fill_color(10, 76, 146)  # Azul PPGOP
+    pdf.set_text_color(255, 255, 255)  # Branco
+    pdf.cell(0, 8, 'Dados do Aluno', 0, 1, 'L', True)
+    pdf.set_text_color(0, 0, 0)  # Preto
+    pdf.ln(2)
     
     # Formatar datas
     data_ingresso = datetime.datetime.strptime(aluno['data_ingresso'], '%Y-%m-%d').strftime('%d/%m/%Y') if aluno['data_ingresso'] else 'Não informada'
     prazo_projeto = datetime.datetime.strptime(aluno['prazo_defesa_projeto'], '%Y-%m-%d').strftime('%d/%m/%Y') if aluno['prazo_defesa_projeto'] else 'Não informado'
     prazo_tese = datetime.datetime.strptime(aluno['prazo_defesa_tese'], '%Y-%m-%d').strftime('%d/%m/%Y') if aluno['prazo_defesa_tese'] else 'Não informado'
     
-    # Preparar tabelas de disciplinas e idiomas
-    disciplinas_html = ""
+    # Informações do aluno
+    pdf.set_font('DejaVu', '', 12)
+    pdf.cell(0, 6, f'Nome: {aluno["nome"]}', 0, 1)
+    pdf.cell(0, 6, f'Matrícula: {aluno["matricula"] or "Não informada"}', 0, 1)
+    pdf.cell(0, 6, f'Email: {aluno["email"]}', 0, 1)
+    pdf.cell(0, 6, f'Orientador: {aluno["orientador"] or "Não informado"}', 0, 1)
+    pdf.cell(0, 6, f'Linha de Pesquisa: {aluno["linha_pesquisa"] or "Não informada"}', 0, 1)
+    pdf.cell(0, 6, f'Data de Ingresso: {data_ingresso}', 0, 1)
+    pdf.cell(0, 6, f'Turma: {aluno["turma"] or "Não informada"}', 0, 1)
+    pdf.cell(0, 6, f'Nível: {aluno["nivel"] or "Não informado"}', 0, 1)
+    pdf.cell(0, 6, f'Prazo Defesa Projeto: {prazo_projeto}', 0, 1)
+    pdf.cell(0, 6, f'Prazo Defesa Tese: {prazo_tese}', 0, 1)
+    pdf.ln(5)
+    
+    # Resumo de aproveitamentos
+    pdf.set_font('DejaVu', '', 14)
+    pdf.set_fill_color(10, 76, 146)  # Azul PPGOP
+    pdf.set_text_color(255, 255, 255)  # Branco
+    pdf.cell(0, 8, 'Resumo de Aproveitamentos', 0, 1, 'L', True)
+    pdf.set_text_color(0, 0, 0)  # Preto
+    pdf.ln(2)
+    
+    # Disciplinas
+    pdf.set_font('DejaVu', '', 12)
+    pdf.set_fill_color(235, 245, 255)  # Azul claro
+    pdf.cell(0, 8, 'Disciplinas', 0, 1, 'L', True)
+    pdf.cell(0, 6, f'Total de disciplinas: {resumo["disciplinas"]["total"]}', 0, 1)
+    pdf.cell(0, 6, f'Créditos aproveitados: {resumo["disciplinas"]["creditos"]}', 0, 1)
+    pdf.cell(0, 6, f'Horas aproveitadas: {resumo["disciplinas"]["horas"]}', 0, 1)
+    pdf.cell(0, 6, f'Disciplinas deferidas: {resumo["disciplinas"]["deferidos"]}', 0, 1)
+    pdf.cell(0, 6, f'Disciplinas pendentes: {resumo["disciplinas"]["pendentes"]}', 0, 1)
+    pdf.ln(2)
+    
+    # Idiomas
+    pdf.set_fill_color(235, 245, 255)  # Azul claro
+    pdf.cell(0, 8, 'Idiomas', 0, 1, 'L', True)
+    pdf.cell(0, 6, f'Total de idiomas: {resumo["idiomas"]["total"]}', 0, 1)
+    pdf.cell(0, 6, f'Idiomas aprovados: {resumo["idiomas"]["aprovados"]}', 0, 1)
+    pdf.cell(0, 6, f'Idiomas pendentes: {resumo["idiomas"]["pendentes"]}', 0, 1)
+    pdf.ln(5)
+    
+    # Detalhes dos aproveitamentos
+    pdf.set_font('DejaVu', '', 14)
+    pdf.set_fill_color(10, 76, 146)  # Azul PPGOP
+    pdf.set_text_color(255, 255, 255)  # Branco
+    pdf.cell(0, 8, 'Detalhes dos Aproveitamentos', 0, 1, 'L', True)
+    pdf.set_text_color(0, 0, 0)  # Preto
+    pdf.ln(2)
+    
+    # Mapeamento de status
+    status_map = {
+        'solicitado': 'Solicitado',
+        'aprovado_coordenacao': 'Aprovado (Coord.)',
+        'aprovado_colegiado': 'Aprovado (Coleg.)',
+        'deferido': 'Deferido',
+        'indeferido': 'Indeferido'
+    }
+    
+    # Disciplinas
     if resumo['detalhes']['disciplinas']:
-        disciplinas_html = "<table border='1' cellspacing='0' cellpadding='5' style='width:100%; border-collapse: collapse;'>"
-        disciplinas_html += "<tr style='background-color: #0A4C92; color: white;'><th>Disciplina</th><th>Código</th><th>Créditos</th><th>Horas</th><th>Instituição</th><th>Status</th><th>Processo</th></tr>"
+        pdf.set_font('DejaVu', '', 12)
+        pdf.set_fill_color(235, 245, 255)  # Azul claro
+        pdf.cell(0, 8, 'Disciplinas', 0, 1, 'L', True)
         
-        status_map = {
-            'solicitado': 'Solicitado',
-            'aprovado_coordenacao': 'Aprovado (Coord.)',
-            'aprovado_colegiado': 'Aprovado (Coleg.)',
-            'deferido': 'Deferido',
-            'indeferido': 'Indeferido'
-        }
+        # Cabeçalho da tabela
+        pdf.set_font('DejaVu', '', 10)
+        pdf.set_fill_color(10, 76, 146)  # Azul PPGOP
+        pdf.set_text_color(255, 255, 255)  # Branco
         
+        # Definir larguras das colunas
+        col_widths = [60, 20, 15, 15, 40, 25, 25]
+        
+        # Cabeçalho
+        pdf.cell(col_widths[0], 8, 'Disciplina', 1, 0, 'C', True)
+        pdf.cell(col_widths[1], 8, 'Código', 1, 0, 'C', True)
+        pdf.cell(col_widths[2], 8, 'Créditos', 1, 0, 'C', True)
+        pdf.cell(col_widths[3], 8, 'Horas', 1, 0, 'C', True)
+        pdf.cell(col_widths[4], 8, 'Instituição', 1, 0, 'C', True)
+        pdf.cell(col_widths[5], 8, 'Status', 1, 0, 'C', True)
+        pdf.cell(col_widths[6], 8, 'Processo', 1, 1, 'C', True)
+        
+        # Dados
+        pdf.set_text_color(0, 0, 0)  # Preto
         for i, disc in enumerate(resumo['detalhes']['disciplinas']):
-            bg_color = "#f2f2f2" if i % 2 == 0 else "white"
-            disciplinas_html += f"<tr style='background-color: {bg_color};'>"
-            disciplinas_html += f"<td>{disc['nome'] or '-'}</td>"
-            disciplinas_html += f"<td>{disc['codigo'] or '-'}</td>"
-            disciplinas_html += f"<td>{disc['creditos'] or 0}</td>"
-            disciplinas_html += f"<td>{disc['horas'] or 0}</td>"
-            disciplinas_html += f"<td>{disc['instituicao'] or '-'}</td>"
-            disciplinas_html += f"<td>{status_map.get(disc['status'], disc['status'])}</td>"
-            disciplinas_html += f"<td>{disc['processo'] or '-'}</td>"
-            disciplinas_html += "</tr>"
+            # Alternar cores das linhas
+            if i % 2 == 0:
+                pdf.set_fill_color(245, 245, 245)  # Cinza claro
+                fill = True
+            else:
+                pdf.set_fill_color(255, 255, 255)  # Branco
+                fill = True
+            
+            # Verificar se precisa quebrar texto
+            nome = disc['nome'] or '-'
+            if pdf.get_string_width(nome) > col_widths[0] - 4:
+                nome = nome[:30] + '...'
+            
+            codigo = disc['codigo'] or '-'
+            if pdf.get_string_width(codigo) > col_widths[1] - 4:
+                codigo = codigo[:10] + '...'
+            
+            instituicao = disc['instituicao'] or '-'
+            if pdf.get_string_width(instituicao) > col_widths[4] - 4:
+                instituicao = instituicao[:20] + '...'
+            
+            # Linha da tabela
+            pdf.cell(col_widths[0], 8, nome, 1, 0, 'L', fill)
+            pdf.cell(col_widths[1], 8, codigo, 1, 0, 'L', fill)
+            pdf.cell(col_widths[2], 8, str(disc['creditos'] or 0), 1, 0, 'C', fill)
+            pdf.cell(col_widths[3], 8, str(disc['horas'] or 0), 1, 0, 'C', fill)
+            pdf.cell(col_widths[4], 8, instituicao, 1, 0, 'L', fill)
+            pdf.cell(col_widths[5], 8, status_map.get(disc['status'], disc['status']), 1, 0, 'L', fill)
+            pdf.cell(col_widths[6], 8, disc['processo'] or '-', 1, 1, 'L', fill)
         
-        disciplinas_html += "</table>"
+        pdf.ln(2)
+    else:
+        pdf.set_font('DejaVu', '', 12)
+        pdf.cell(0, 8, 'Nenhuma disciplina cadastrada para este aluno.', 0, 1)
+        pdf.ln(2)
     
-    idiomas_html = ""
+    # Idiomas
     if resumo['detalhes']['idiomas']:
-        idiomas_html = "<table border='1' cellspacing='0' cellpadding='5' style='width:100%; border-collapse: collapse;'>"
-        idiomas_html += "<tr style='background-color: #0A4C92; color: white;'><th>Idioma</th><th>Nota</th><th>Instituição</th><th>Status</th><th>Processo</th></tr>"
+        pdf.set_font('DejaVu', '', 12)
+        pdf.set_fill_color(235, 245, 255)  # Azul claro
+        pdf.cell(0, 8, 'Idiomas', 0, 1, 'L', True)
         
+        # Cabeçalho da tabela
+        pdf.set_font('DejaVu', '', 10)
+        pdf.set_fill_color(10, 76, 146)  # Azul PPGOP
+        pdf.set_text_color(255, 255, 255)  # Branco
+        
+        # Definir larguras das colunas
+        col_widths = [40, 20, 60, 40, 40]
+        
+        # Cabeçalho
+        pdf.cell(col_widths[0], 8, 'Idioma', 1, 0, 'C', True)
+        pdf.cell(col_widths[1], 8, 'Nota', 1, 0, 'C', True)
+        pdf.cell(col_widths[2], 8, 'Instituição', 1, 0, 'C', True)
+        pdf.cell(col_widths[3], 8, 'Status', 1, 0, 'C', True)
+        pdf.cell(col_widths[4], 8, 'Processo', 1, 1, 'C', True)
+        
+        # Dados
+        pdf.set_text_color(0, 0, 0)  # Preto
         for i, idioma in enumerate(resumo['detalhes']['idiomas']):
-            bg_color = "#f2f2f2" if i % 2 == 0 else "white"
-            idiomas_html += f"<tr style='background-color: {bg_color};'>"
-            idiomas_html += f"<td>{idioma['idioma'] or '-'}</td>"
-            idiomas_html += f"<td>{idioma['nota'] or '-'}</td>"
-            idiomas_html += f"<td>{idioma['instituicao'] or '-'}</td>"
-            idiomas_html += f"<td>{status_map.get(idioma['status'], idioma['status'])}</td>"
-            idiomas_html += f"<td>{idioma['processo'] or '-'}</td>"
-            idiomas_html += "</tr>"
-        
-        idiomas_html += "</table>"
-    
-    # Template HTML para o PDF
-    html_template = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <title>Dashboard do Aluno - {{ aluno.nome }}</title>
-        <style>
-            body {
-                font-family: "Noto Sans CJK SC", "WenQuanYi Zen Hei", sans-serif;
-                color: #333;
-                line-height: 1.5;
-                margin: 0;
-                padding: 20px;
-            }
-            .header {
-                text-align: center;
-                margin-bottom: 30px;
-            }
-            .header h1 {
-                color: #0A4C92;
-                margin-bottom: 5px;
-            }
-            .header p {
-                color: #666;
-                font-size: 14px;
-            }
-            .section {
-                margin-bottom: 30px;
-            }
-            .section h2 {
-                color: #0A4C92;
-                border-bottom: 2px solid #0A4C92;
-                padding-bottom: 5px;
-                margin-bottom: 15px;
-            }
-            .info-card {
-                background-color: #EBF5FF;
-                border-left: 5px solid #0A4C92;
-                padding: 15px;
-                margin-bottom: 20px;
-                border-radius: 5px;
-            }
-            .info-card h3 {
-                color: #0A4C92;
-                margin-top: 0;
-                margin-bottom: 10px;
-            }
-            .info-grid {
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 20px;
-            }
-            .chart-container {
-                text-align: center;
-                margin: 20px 0;
-            }
-            table {
-                width: 100%;
-                border-collapse: collapse;
-                margin-bottom: 20px;
-            }
-            th, td {
-                padding: 8px;
-                text-align: left;
-                border: 1px solid #ddd;
-            }
-            th {
-                background-color: #0A4C92;
-                color: white;
-            }
-            tr:nth-child(even) {
-                background-color: #f2f2f2;
-            }
-            .footer {
-                text-align: center;
-                margin-top: 30px;
-                font-size: 12px;
-                color: #666;
-                border-top: 1px solid #ddd;
-                padding-top: 10px;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="header">
-            <h1>Dashboard do Aluno</h1>
-            <p>Programa de Pós-Graduação em Gestão de Organizações Públicas</p>
-            <p>Relatório gerado em {{ data_geracao }}</p>
-        </div>
-        
-        <div class="section">
-            <h2>Dados do Aluno</h2>
-            <div class="info-grid">
-                <div>
-                    <p><strong>Nome:</strong> {{ aluno.nome }}</p>
-                    <p><strong>Matrícula:</strong> {{ aluno.matricula or 'Não informada' }}</p>
-                    <p><strong>Email:</strong> {{ aluno.email }}</p>
-                    <p><strong>Orientador:</strong> {{ aluno.orientador or 'Não informado' }}</p>
-                </div>
-                <div>
-                    <p><strong>Linha de Pesquisa:</strong> {{ aluno.linha_pesquisa or 'Não informada' }}</p>
-                    <p><strong>Data de Ingresso:</strong> {{ data_ingresso }}</p>
-                    <p><strong>Turma:</strong> {{ aluno.turma or 'Não informada' }}</p>
-                    <p><strong>Prazo Defesa Projeto:</strong> {{ prazo_projeto }}</p>
-                    <p><strong>Prazo Defesa Tese:</strong> {{ prazo_tese }}</p>
-                </div>
-            </div>
-        </div>
-        
-        <div class="section">
-            <h2>Resumo de Aproveitamentos</h2>
-            <div class="info-grid">
-                <div class="info-card">
-                    <h3>Disciplinas</h3>
-                    <p><strong>Total de disciplinas:</strong> {{ resumo.disciplinas.total }}</p>
-                    <p><strong>Créditos aproveitados:</strong> {{ resumo.disciplinas.creditos }}</p>
-                    <p><strong>Horas aproveitadas:</strong> {{ resumo.disciplinas.horas }}</p>
-                    <p><strong>Disciplinas deferidas:</strong> {{ resumo.disciplinas.deferidos }}</p>
-                    <p><strong>Disciplinas pendentes:</strong> {{ resumo.disciplinas.pendentes }}</p>
-                </div>
-                <div class="info-card">
-                    <h3>Idiomas</h3>
-                    <p><strong>Total de idiomas:</strong> {{ resumo.idiomas.total }}</p>
-                    <p><strong>Idiomas aprovados:</strong> {{ resumo.idiomas.aprovados }}</p>
-                    <p><strong>Idiomas pendentes:</strong> {{ resumo.idiomas.pendentes }}</p>
-                </div>
-            </div>
+            # Alternar cores das linhas
+            if i % 2 == 0:
+                pdf.set_fill_color(245, 245, 245)  # Cinza claro
+                fill = True
+            else:
+                pdf.set_fill_color(255, 255, 255)  # Branco
+                fill = True
             
-            {% if disciplinas_img or idiomas_img %}
-            <h3>Gráficos de Aproveitamentos</h3>
-            <div class="info-grid">
-                {% if disciplinas_img %}
-                <div class="chart-container">
-                    <img src="data:image/png;base64,{{ disciplinas_img }}" alt="Gráfico de Disciplinas" style="max-width: 100%;">
-                </div>
-                {% endif %}
-                
-                {% if idiomas_img %}
-                <div class="chart-container">
-                    <img src="data:image/png;base64,{{ idiomas_img }}" alt="Gráfico de Idiomas" style="max-width: 100%;">
-                </div>
-                {% endif %}
-            </div>
-            {% endif %}
-        </div>
-        
-        <div class="section">
-            <h2>Detalhes dos Aproveitamentos</h2>
+            # Verificar se precisa quebrar texto
+            nome_idioma = idioma['idioma'] or '-'
+            if pdf.get_string_width(nome_idioma) > col_widths[0] - 4:
+                nome_idioma = nome_idioma[:20] + '...'
             
-            {% if disciplinas_html %}
-            <h3>Disciplinas</h3>
-            {{ disciplinas_html|safe }}
-            {% else %}
-            <p><em>Nenhuma disciplina cadastrada para este aluno.</em></p>
-            {% endif %}
+            instituicao = idioma['instituicao'] or '-'
+            if pdf.get_string_width(instituicao) > col_widths[2] - 4:
+                instituicao = instituicao[:30] + '...'
             
-            {% if idiomas_html %}
-            <h3>Idiomas</h3>
-            {{ idiomas_html|safe }}
-            {% else %}
-            <p><em>Nenhum idioma cadastrado para este aluno.</em></p>
-            {% endif %}
-        </div>
+            # Linha da tabela
+            pdf.cell(col_widths[0], 8, nome_idioma, 1, 0, 'L', fill)
+            pdf.cell(col_widths[1], 8, str(idioma['nota'] or '-'), 1, 0, 'C', fill)
+            pdf.cell(col_widths[2], 8, instituicao, 1, 0, 'L', fill)
+            pdf.cell(col_widths[3], 8, status_map.get(idioma['status'], idioma['status']), 1, 0, 'L', fill)
+            pdf.cell(col_widths[4], 8, idioma['processo'] or '-', 1, 1, 'L', fill)
         
-        <div class="footer">
-            <p>PPGOP - Sistema de Gestão de Alunos e Aproveitamento de Disciplinas</p>
-        </div>
-    </body>
-    </html>
-    """
+        pdf.ln(2)
+    else:
+        pdf.set_font('DejaVu', '', 12)
+        pdf.cell(0, 8, 'Nenhum idioma cadastrado para este aluno.', 0, 1)
+        pdf.ln(2)
     
-    # Renderizar template
-    template = Template(html_template)
-    html_content = template.render(
-        aluno=aluno,
-        resumo=resumo,
-        data_geracao=datetime.datetime.now().strftime('%d/%m/%Y %H:%M'),
-        data_ingresso=data_ingresso,
-        prazo_projeto=prazo_projeto,
-        prazo_tese=prazo_tese,
-        disciplinas_img=disciplinas_img,
-        idiomas_img=idiomas_img,
-        disciplinas_html=disciplinas_html,
-        idiomas_html=idiomas_html
-    )
+    # Rodapé
+    pdf.set_y(-20)
+    pdf.set_font('DejaVu', '', 8)
+    pdf.cell(0, 5, 'PPGOP - Sistema de Gestão de Alunos e Aproveitamento de Disciplinas', 0, 1, 'C')
+    pdf.cell(0, 5, f'Gerado em {datetime.datetime.now().strftime("%d/%m/%Y %H:%M")}', 0, 1, 'C')
     
-    # Gerar PDF
-    pdf = HTML(string=html_content).write_pdf(
-        stylesheets=[
-            CSS(string='''
-                @page {
-                    size: A4;
-                    margin: 1cm;
-                }
-                body {
-                    font-family: "Noto Sans CJK SC", "WenQuanYi Zen Hei", sans-serif;
-                }
-            ''')
-        ]
-    )
-    
-    return pdf
+    return pdf.output(dest='S').encode('latin1')
 
 # Função para criar link de download
 def get_download_link(pdf_bytes, filename):
@@ -914,6 +858,9 @@ else:
                     data_ingresso = st.date_input("Data de Ingresso", 
                                                 value=datetime.datetime.strptime(st.session_state.editing_aluno.get('data_ingresso', datetime.datetime.now().strftime('%Y-%m-%d')), '%Y-%m-%d').date() if st.session_state.editing_aluno.get('data_ingresso') else datetime.datetime.now())
                     turma = st.text_input("Turma", value=st.session_state.editing_aluno.get('turma', ''))
+                    nivel = st.selectbox("Nível", 
+                                       options=["Mestrado", "Doutorado"],
+                                       index=0 if st.session_state.editing_aluno.get('nivel') != "Doutorado" else 1)
                     prazo_defesa_projeto = st.date_input("Prazo Defesa Projeto", 
                                                       value=datetime.datetime.strptime(st.session_state.editing_aluno.get('prazo_defesa_projeto', ''), '%Y-%m-%d').date() if st.session_state.editing_aluno.get('prazo_defesa_projeto') else None)
                     prazo_defesa_tese = st.date_input("Prazo Defesa Tese", 
@@ -939,6 +886,7 @@ else:
                             'linha_pesquisa': linha_pesquisa,
                             'data_ingresso': data_ingresso.strftime('%Y-%m-%d'),
                             'turma': turma,
+                            'nivel': nivel,
                             'prazo_defesa_projeto': prazo_defesa_projeto.strftime('%Y-%m-%d') if prazo_defesa_projeto else None,
                             'prazo_defesa_tese': prazo_defesa_tese.strftime('%Y-%m-%d') if prazo_defesa_tese else None
                         }
